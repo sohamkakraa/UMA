@@ -7,6 +7,7 @@ import { getStore } from "@/lib/store";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { AppTopNav } from "@/components/nav/AppTopNav";
 import { ArrowLeft } from "lucide-react";
 
 export default function DocDetailPage() {
@@ -29,40 +30,42 @@ export default function DocDetailPage() {
   if (!doc) {
     return (
       <div className="min-h-screen pb-24">
-        <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--panel)]/80 backdrop-blur">
-          <div className="mx-auto max-w-5xl px-4 py-4 flex items-center gap-3">
-            <Link href="/dashboard">
-              <Button variant="ghost" className="gap-2">
-                <ArrowLeft className="h-4 w-4" /> Back
-              </Button>
-            </Link>
-            <div>
-              <h1 className="text-lg font-semibold">Document</h1>
-              <p className="text-xs mv-muted">Document not found.</p>
-            </div>
-          </div>
-        </header>
+        <AppTopNav rightSlot={<Badge>UMA Records</Badge>} />
+        <div className="mx-auto max-w-5xl px-4 py-6">
+          <Card>
+            <CardContent className="py-6">
+              <h1 className="text-lg font-semibold">Record not found</h1>
+              <p className="text-sm mv-muted mt-1">
+                UMA could not locate this document in your saved records.
+              </p>
+              <Link href="/dashboard" className="inline-block mt-3">
+                <Button variant="ghost" className="gap-2">
+                  <ArrowLeft className="h-4 w-4" /> Back to dashboard
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen pb-24">
-      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--panel)]/80 backdrop-blur">
-        <div className="mx-auto max-w-5xl px-4 py-4 flex items-center gap-3">
+      <AppTopNav rightSlot={<Badge>UMA Records</Badge>} />
+
+      <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
+        <div className="flex items-center gap-3">
           <Link href="/dashboard">
             <Button variant="ghost" className="gap-2">
               <ArrowLeft className="h-4 w-4" /> Back
             </Button>
           </Link>
           <div>
-            <h1 className="text-lg font-semibold">Document details</h1>
+            <h1 className="text-lg font-semibold">Record details</h1>
             <p className="text-xs mv-muted">{doc.title}</p>
           </div>
         </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
         <Card>
           <CardHeader>
             <div className="flex flex-wrap gap-2 text-xs">

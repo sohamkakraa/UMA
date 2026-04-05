@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import Link from "next/link";
 import { getStore } from "@/lib/store";
 import type { ExtractedLab } from "@/lib/types";
-import { ArrowLeft, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
+import { AppTopNav } from "@/components/nav/AppTopNav";
 
 // ---------------------------------------------------------------------------
 // Section definitions
@@ -47,7 +47,7 @@ const SECTIONS: Section[] = [
     title: "Your Body, Illuminated",
     subtitle: "Health Overview",
     description:
-      "An interactive map of your health data, drawn directly from your uploaded records. Scroll to explore each system.",
+      "An interactive map of your health data, drawn directly from your saved records. Scroll to explore each system.",
     organ: null,
     color: "#00e5ff",
     side: "none",
@@ -146,6 +146,17 @@ const SECTIONS: Section[] = [
   },
 ];
 
+const ORGAN_TO_SECTION: Record<OrganKey, SectionId> = {
+  brain: "intro",
+  thyroid: "thyroid",
+  heart: "heart",
+  liver: "liver",
+  pancreas: "glucose",
+  leftKidney: "kidneys",
+  rightKidney: "kidneys",
+  blood: "blood",
+};
+
 // ---------------------------------------------------------------------------
 // Organ geometry
 // ---------------------------------------------------------------------------
@@ -159,14 +170,14 @@ interface OrganDef {
 }
 
 const ORGANS: OrganDef[] = [
-  { key: "brain", cx: 250, cy: 52, r: 20, label: "Brain" },
-  { key: "thyroid", cx: 250, cy: 112, r: 9, label: "Thyroid" },
-  { key: "heart", cx: 222, cy: 196, r: 13, label: "Heart" },
-  { key: "liver", cx: 278, cy: 210, r: 14, label: "Liver" },
-  { key: "pancreas", cx: 248, cy: 250, r: 11, label: "Pancreas" },
-  { key: "leftKidney", cx: 216, cy: 276, r: 10, label: "Kidney" },
-  { key: "rightKidney", cx: 284, cy: 276, r: 10, label: "Kidney" },
-  { key: "blood", cx: 250, cy: 340, r: 16, label: "Blood" },
+  { key: "brain", cx: 250, cy: 66, r: 22, label: "Brain" },
+  { key: "thyroid", cx: 250, cy: 126, r: 9, label: "Thyroid" },
+  { key: "heart", cx: 234, cy: 214, r: 14, label: "Heart" },
+  { key: "liver", cx: 278, cy: 240, r: 16, label: "Liver" },
+  { key: "pancreas", cx: 254, cy: 270, r: 12, label: "Pancreas" },
+  { key: "leftKidney", cx: 224, cy: 296, r: 11, label: "Kidney" },
+  { key: "rightKidney", cx: 278, cy: 296, r: 11, label: "Kidney" },
+  { key: "blood", cx: 250, cy: 364, r: 17, label: "Blood" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -176,106 +187,186 @@ const ORGANS: OrganDef[] = [
 interface VeinDef {
   key: string;
   d: string;
+  type: "artery" | "vein";
   delay: number;
   activeSections: SectionId[];
 }
 
 const VEINS: VeinDef[] = [
   {
-    key: "aorta",
-    d: "M 250,120 L 250,344",
+    key: "aorta-main",
+    d: "M 250,138 L 250,372",
+    type: "artery",
     delay: 0,
     activeSections: ["heart", "intro", "blood"],
   },
   {
-    key: "carotid",
-    d: "M 250,120 L 250,104",
-    delay: 0.3,
+    key: "carotid-left",
+    d: "M 250,138 C 248,128 246,112 244,100",
+    type: "artery",
+    delay: 0.25,
     activeSections: ["heart", "intro", "blood"],
   },
   {
-    key: "lsub",
-    d: "M 250,152 C 218,152 192,147 178,142 L 164,140",
+    key: "carotid-right",
+    d: "M 250,138 C 252,128 254,112 256,100",
+    type: "artery",
+    delay: 0.33,
+    activeSections: ["heart", "intro", "blood"],
+  },
+  {
+    key: "subclavian-left",
+    d: "M 250,162 C 224,164 196,166 168,178",
+    type: "artery",
+    delay: 0.42,
+    activeSections: ["heart", "intro", "blood"],
+  },
+  {
+    key: "subclavian-right",
+    d: "M 250,162 C 276,164 304,166 332,178",
+    type: "artery",
+    delay: 0.45,
+    activeSections: ["heart", "intro", "blood"],
+  },
+  {
+    key: "brachial-left",
+    d: "M 168,178 C 160,218 154,262 152,310",
+    type: "artery",
+    delay: 0.65,
+    activeSections: ["heart", "intro", "blood"],
+  },
+  {
+    key: "brachial-right",
+    d: "M 332,178 C 340,218 346,262 348,310",
+    type: "artery",
+    delay: 0.7,
+    activeSections: ["heart", "intro", "blood"],
+  },
+  {
+    key: "iliac-left",
+    d: "M 250,372 C 244,386 234,398 222,414",
+    type: "artery",
+    delay: 0.95,
+    activeSections: ["blood", "intro"],
+  },
+  {
+    key: "iliac-right",
+    d: "M 250,372 C 256,386 266,398 278,414",
+    type: "artery",
+    delay: 0.98,
+    activeSections: ["blood", "intro"],
+  },
+  {
+    key: "femoral-left",
+    d: "M 222,414 C 216,470 214,530 216,586",
+    type: "artery",
+    delay: 1.2,
+    activeSections: ["blood", "intro"],
+  },
+  {
+    key: "femoral-right",
+    d: "M 278,414 C 284,470 286,530 284,586",
+    type: "artery",
+    delay: 1.24,
+    activeSections: ["blood", "intro"],
+  },
+  {
+    key: "hepatic-artery",
+    d: "M 250,250 C 260,244 270,240 278,240",
+    type: "artery",
     delay: 0.5,
-    activeSections: ["heart", "intro", "blood"],
-  },
-  {
-    key: "rsub",
-    d: "M 250,152 C 282,152 308,147 322,142 L 336,140",
-    delay: 0.5,
-    activeSections: ["heart", "intro", "blood"],
-  },
-  {
-    key: "larm",
-    d: "M 164,140 L 159,196 L 155,282",
-    delay: 0.8,
-    activeSections: ["heart", "intro", "blood"],
-  },
-  {
-    key: "rarm",
-    d: "M 336,140 L 341,196 L 345,282",
-    delay: 0.8,
-    activeSections: ["heart", "intro", "blood"],
-  },
-  {
-    key: "liliac",
-    d: "M 241,344 L 233,358 L 218,364 L 213,378",
-    delay: 1.1,
-    activeSections: ["blood", "intro"],
-  },
-  {
-    key: "riliac",
-    d: "M 259,344 L 267,358 L 282,364 L 287,378",
-    delay: 1.1,
-    activeSections: ["blood", "intro"],
-  },
-  {
-    key: "lleg",
-    d: "M 213,378 L 219,560",
-    delay: 1.4,
-    activeSections: ["blood", "intro"],
-  },
-  {
-    key: "rleg",
-    d: "M 287,378 L 281,560",
-    delay: 1.4,
-    activeSections: ["blood", "intro"],
-  },
-  {
-    key: "hepatic",
-    d: "M 250,224 C 260,219 268,213 278,210",
-    delay: 0.4,
     activeSections: ["liver", "glucose", "intro", "blood"],
   },
   {
-    key: "portal",
-    d: "M 250,252 C 256,247 265,240 278,210",
-    delay: 0.6,
-    activeSections: ["liver", "glucose", "intro", "blood"],
-  },
-  {
-    key: "lrenal",
-    d: "M 241,268 C 233,271 225,273 216,276",
-    delay: 0.7,
+    key: "renal-artery-left",
+    d: "M 250,286 C 240,290 232,294 224,296",
+    type: "artery",
+    delay: 0.76,
     activeSections: ["kidneys", "intro", "blood"],
   },
   {
-    key: "rrenal",
-    d: "M 259,268 C 267,271 275,273 284,276",
-    delay: 0.7,
+    key: "renal-artery-right",
+    d: "M 250,286 C 260,290 268,294 278,296",
+    type: "artery",
+    delay: 0.79,
     activeSections: ["kidneys", "intro", "blood"],
   },
   {
-    key: "thyvein",
-    d: "M 250,120 L 250,112",
-    delay: 0.15,
-    activeSections: ["thyroid", "intro"],
-  },
-  {
-    key: "heartloop",
-    d: "M 250,185 C 240,188 224,193 220,203 C 216,212 226,220 234,215 C 242,210 250,203 250,195",
+    key: "jugular-left",
+    d: "M 246,98 C 243,112 242,124 242,138",
+    type: "vein",
     delay: 0.2,
-    activeSections: ["heart", "intro", "blood"],
+    activeSections: ["thyroid", "intro", "blood"],
+  },
+  {
+    key: "jugular-right",
+    d: "M 254,98 C 257,112 258,124 258,138",
+    type: "vein",
+    delay: 0.24,
+    activeSections: ["thyroid", "intro", "blood"],
+  },
+  {
+    key: "vena-cava",
+    d: "M 242,138 C 242,188 244,250 246,372",
+    type: "vein",
+    delay: 0.58,
+    activeSections: ["heart", "blood", "intro"],
+  },
+  {
+    key: "vena-cava-right",
+    d: "M 258,138 C 258,188 256,250 254,372",
+    type: "vein",
+    delay: 0.61,
+    activeSections: ["heart", "blood", "intro"],
+  },
+  {
+    key: "portal-vein",
+    d: "M 250,270 C 262,264 270,252 278,240",
+    type: "vein",
+    delay: 0.72,
+    activeSections: ["liver", "glucose", "intro", "blood"],
+  },
+  {
+    key: "renal-vein-left",
+    d: "M 246,288 C 238,290 230,294 224,296",
+    type: "vein",
+    delay: 0.84,
+    activeSections: ["kidneys", "intro", "blood"],
+  },
+  {
+    key: "renal-vein-right",
+    d: "M 254,288 C 262,290 270,294 278,296",
+    type: "vein",
+    delay: 0.88,
+    activeSections: ["kidneys", "intro", "blood"],
+  },
+  {
+    key: "cephalic-left",
+    d: "M 162,186 C 170,240 176,278 180,312",
+    type: "vein",
+    delay: 0.92,
+    activeSections: ["blood", "intro", "heart"],
+  },
+  {
+    key: "cephalic-right",
+    d: "M 338,186 C 330,240 324,278 320,312",
+    type: "vein",
+    delay: 0.94,
+    activeSections: ["blood", "intro", "heart"],
+  },
+  {
+    key: "saphenous-left",
+    d: "M 232,414 C 236,468 238,528 236,586",
+    type: "vein",
+    delay: 1.28,
+    activeSections: ["blood", "intro"],
+  },
+  {
+    key: "saphenous-right",
+    d: "M 268,414 C 264,468 262,528 264,586",
+    type: "vein",
+    delay: 1.32,
+    activeSections: ["blood", "intro"],
   },
 ];
 
@@ -296,16 +387,13 @@ function hashStr(s: string): number {
 // ---------------------------------------------------------------------------
 
 export default function BodyPage() {
-  const [mounted, setMounted] = useState(false);
   const [scrollY, setScrollY] = useState(0);
-  const [windowHeight, setWindowHeight] = useState(800);
-  const [store, setStore] = useState<ReturnType<typeof getStore> | null>(null);
+  const [windowHeight, setWindowHeight] = useState(
+    typeof window !== "undefined" ? window.innerHeight : 800
+  );
+  const [store] = useState<ReturnType<typeof getStore> | null>(() => getStore());
 
   useEffect(() => {
-    setMounted(true);
-    setStore(getStore());
-    setWindowHeight(window.innerHeight);
-
     const handleScroll = () => setScrollY(window.scrollY);
     const handleResize = () => setWindowHeight(window.innerHeight);
 
@@ -358,20 +446,6 @@ export default function BodyPage() {
     window.scrollTo({ top: index * windowHeight, behavior: "smooth" });
   };
 
-  if (!mounted) {
-    return (
-      <div
-        style={{
-          background: "#030d14",
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      />
-    );
-  }
-
   return (
     <>
       {/* Global styles */}
@@ -413,77 +487,42 @@ export default function BodyPage() {
       `}</style>
 
       <div style={{ background: "#030d14", minHeight: "100vh" }}>
-        {/* Fixed Header */}
-        <header
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 56,
-            zIndex: 50,
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
-            background: "rgba(3,13,20,0.85)",
-            borderBottom: "1px solid rgba(0,229,255,0.12)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 24px",
-          }}
-        >
-          <Link
-            href="/dashboard"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              color: "#00e5ff",
-              textDecoration: "none",
-              fontSize: 14,
-              fontWeight: 500,
-              letterSpacing: "0.02em",
-            }}
-          >
-            <ArrowLeft size={16} />
-            Dashboard
-          </Link>
-
-          {/* Progress dots */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {SECTIONS.map((s, i) => (
-              <button
-                key={s.id}
-                onClick={() => scrollToSection(i)}
-                title={s.title}
-                style={{
-                  border: "none",
-                  cursor: "pointer",
-                  padding: 0,
-                  background: "none",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <span
+        <AppTopNav
+          fixed
+          rightSlot={
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {SECTIONS.map((s, i) => (
+                <button
+                  key={s.id}
+                  onClick={() => scrollToSection(i)}
+                  title={s.title}
                   style={{
-                    display: "block",
-                    height: 6,
-                    width: i === activeIndex ? 20 : 6,
-                    borderRadius: 3,
-                    background:
-                      i === activeIndex
-                        ? section.color
-                        : "rgba(255,255,255,0.2)",
-                    transition: "all 0.4s ease",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                    background: "none",
+                    display: "flex",
+                    alignItems: "center",
                   }}
-                />
-              </button>
-            ))}
-          </div>
-
-          <div style={{ width: 80 }} />
-        </header>
+                >
+                  <span
+                    style={{
+                      display: "block",
+                      height: 6,
+                      width: i === activeIndex ? 20 : 6,
+                      borderRadius: 3,
+                      background:
+                        i === activeIndex
+                          ? section.color
+                          : "rgba(255,255,255,0.2)",
+                      transition: "all 0.4s ease",
+                    }}
+                  />
+                </button>
+              ))}
+            </div>
+          }
+        />
 
         {/* Scroll container */}
         <div style={{ height: `${7 * 100}vh` }}>
@@ -601,8 +640,16 @@ interface BodySVGProps {
 }
 
 function BodySVG({ section, isFemale }: BodySVGProps) {
-  const bodyFill = "#0e2a3d";
-  const bodyStroke = "rgba(0,229,255,0.08)";
+  const bodyStroke = "rgba(212, 232, 255, 0.24)";
+
+  const onOrganClick = (organ: OrganKey) => {
+    const id = ORGAN_TO_SECTION[organ];
+    const idx = SECTIONS.findIndex((s) => s.id === id);
+    if (idx >= 0) {
+      const vh = window.innerHeight;
+      window.scrollTo({ top: idx * vh, behavior: "smooth" });
+    }
+  };
 
   return (
     <div
@@ -625,6 +672,14 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
+          <linearGradient id="bodyTone" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#173246" stopOpacity="0.92" />
+            <stop offset="100%" stopColor="#0a1824" stopOpacity="0.96" />
+          </linearGradient>
+          <radialGradient id="coreGlow" cx="50%" cy="35%" r="60%">
+            <stop offset="0%" stopColor="rgba(154,198,238,0.28)" />
+            <stop offset="100%" stopColor="rgba(7,22,35,0)" />
+          </radialGradient>
           {/* Glow filter for active organs */}
           <filter id="organGlow" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="5" result="blur" />
@@ -641,114 +696,33 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+          <filter id="bodySoftGlow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="7" result="soft" />
+            <feMerge>
+              <feMergeNode in="soft" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
 
-        {/* Body outline */}
-        {/* Head */}
-        <ellipse
-          cx={250}
-          cy={60}
-          rx={36}
-          ry={44}
-          fill={bodyFill}
+        {/* Body silhouette */}
+        <ellipse cx={250} cy={70} rx={28} ry={38} fill="url(#bodyTone)" stroke={bodyStroke} strokeWidth={1.1} />
+        <path d="M242 106 C244 116 244 124 243 136 L257 136 C256 124 256 116 258 106 Z" fill="url(#bodyTone)" stroke={bodyStroke} strokeWidth={1} />
+        <path
+          d={
+            isFemale
+              ? "M212 142 C199 148 189 158 184 176 C179 194 181 216 186 242 C190 262 193 286 194 314 C195 340 198 365 208 382 C217 397 231 405 250 406 C269 405 283 397 292 382 C302 365 305 340 306 314 C307 286 310 262 314 242 C319 216 321 194 316 176 C311 158 301 148 288 142 C276 136 263 134 250 134 C237 134 224 136 212 142 Z"
+              : "M214 142 C201 148 191 156 185 173 C179 191 181 214 186 241 C190 262 193 286 194 314 C195 338 199 360 209 376 C218 390 232 398 250 399 C268 398 282 390 291 376 C301 360 305 338 306 314 C307 286 310 262 314 241 C319 214 321 191 315 173 C309 156 299 148 286 142 C274 136 262 134 250 134 C238 134 226 136 214 142 Z"
+          }
+          fill="url(#bodyTone)"
           stroke={bodyStroke}
-          strokeWidth={1}
-          style={{ transition: "fill 0.5s ease" }}
+          strokeWidth={1.2}
         />
-        {/* Neck */}
-        <rect
-          x={234}
-          y={102}
-          width={32}
-          height={24}
-          rx={8}
-          fill={bodyFill}
-          stroke={bodyStroke}
-          strokeWidth={1}
-          style={{ transition: "fill 0.5s ease" }}
-        />
-        {/* Torso */}
-        <rect
-          x={183}
-          y={122}
-          width={134}
-          height={228}
-          rx={18}
-          fill={bodyFill}
-          stroke={bodyStroke}
-          strokeWidth={1}
-          style={{ transition: "fill 0.5s ease" }}
-        />
-        {/* Female hip */}
-        {isFemale && (
-          <rect
-            x={177}
-            y={292}
-            width={146}
-            height={60}
-            rx={18}
-            fill={bodyFill}
-            stroke={bodyStroke}
-            strokeWidth={1}
-            style={{ transition: "fill 0.5s ease" }}
-          />
-        )}
-        {/* Left arm */}
-        <rect
-          x={152}
-          y={128}
-          width={32}
-          height={162}
-          rx={12}
-          fill={bodyFill}
-          stroke={bodyStroke}
-          strokeWidth={1}
-          style={{
-            transformOrigin: "168px 128px",
-            transform: "rotate(-5deg)",
-            transition: "fill 0.5s ease",
-          }}
-        />
-        {/* Right arm */}
-        <rect
-          x={316}
-          y={128}
-          width={32}
-          height={162}
-          rx={12}
-          fill={bodyFill}
-          stroke={bodyStroke}
-          strokeWidth={1}
-          style={{
-            transformOrigin: "332px 128px",
-            transform: "rotate(5deg)",
-            transition: "fill 0.5s ease",
-          }}
-        />
-        {/* Left leg */}
-        <rect
-          x={191}
-          y={344}
-          width={55}
-          height={250}
-          rx={16}
-          fill={bodyFill}
-          stroke={bodyStroke}
-          strokeWidth={1}
-          style={{ transition: "fill 0.5s ease" }}
-        />
-        {/* Right leg */}
-        <rect
-          x={254}
-          y={344}
-          width={55}
-          height={250}
-          rx={16}
-          fill={bodyFill}
-          stroke={bodyStroke}
-          strokeWidth={1}
-          style={{ transition: "fill 0.5s ease" }}
-        />
+        <path d="M188 174 C173 188 165 214 162 246 C159 280 160 310 164 334 C166 346 171 352 178 353 C185 354 190 349 192 339 C196 322 195 295 194 267 C193 244 195 220 201 196" fill="url(#bodyTone)" stroke={bodyStroke} strokeWidth={1.05} />
+        <path d="M312 174 C327 188 335 214 338 246 C341 280 340 310 336 334 C334 346 329 352 322 353 C315 354 310 349 308 339 C304 322 305 295 306 267 C307 244 305 220 299 196" fill="url(#bodyTone)" stroke={bodyStroke} strokeWidth={1.05} />
+        <path d="M224 396 C217 412 213 434 211 463 C209 505 211 542 216 575 C219 592 225 598 233 597 C240 596 244 589 244 578 C245 552 243 525 242 498 C241 468 244 442 248 408" fill="url(#bodyTone)" stroke={bodyStroke} strokeWidth={1.05} />
+        <path d="M276 396 C283 412 287 434 289 463 C291 505 289 542 284 575 C281 592 275 598 267 597 C260 596 256 589 256 578 C255 552 257 525 258 498 C259 468 256 442 252 408" fill="url(#bodyTone)" stroke={bodyStroke} strokeWidth={1.05} />
+        <ellipse cx={250} cy={258} rx={72} ry={128} fill="url(#coreGlow)" />
 
         {/* Veins */}
         {VEINS.map((vein) => {
@@ -761,7 +735,6 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
               key={vein.key}
               vein={vein}
               isActive={isActive}
-              color={section.color}
             />
           );
         })}
@@ -775,6 +748,7 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
               organ={organ}
               isActive={isActive}
               color={section.color}
+              onSelect={onOrganClick}
             />
           );
         })}
@@ -790,13 +764,13 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
 interface VeinPathProps {
   vein: VeinDef;
   isActive: boolean;
-  color: string;
 }
 
-function VeinPath({ vein, isActive, color }: VeinPathProps) {
+function VeinPath({ vein, isActive }: VeinPathProps) {
   const slowDuration = isActive ? 2.2 : 5;
-  const strokeColor = isActive ? color : "#0a2535";
-  const strokeOpacity = isActive ? 0.7 : 1;
+  const baseColor = vein.type === "artery" ? "#ef5c71" : "#8bc3ff";
+  const strokeColor = isActive ? baseColor : "rgba(77,110,140,0.45)";
+  const strokeOpacity = isActive ? 0.9 : 0.6;
 
   // Deterministic animation offset based on vein key
   const offset = (hashStr(vein.key) % 40) / 10;
@@ -809,9 +783,9 @@ function VeinPath({ vein, isActive, color }: VeinPathProps) {
         fill="none"
         stroke={strokeColor}
         strokeOpacity={strokeOpacity}
-        strokeWidth={isActive ? 1.5 : 1}
+        strokeWidth={isActive ? (vein.type === "artery" ? 1.8 : 1.6) : 1}
         strokeLinecap="round"
-        strokeDasharray={isActive ? "6 44" : "none"}
+        strokeDasharray={isActive ? (vein.type === "artery" ? "8 34" : "6 30") : "none"}
         strokeDashoffset={0}
         style={
           isActive
@@ -827,13 +801,15 @@ function VeinPath({ vein, isActive, color }: VeinPathProps) {
         <path
           d={vein.d}
           fill="none"
-          stroke={color}
-          strokeOpacity={0.45}
-          strokeWidth={1}
+          stroke={vein.type === "artery" ? "#ff9aaa" : "#c6e3ff"}
+          strokeOpacity={0.58}
+          strokeWidth={vein.type === "artery" ? 1.2 : 1}
           strokeLinecap="round"
-          strokeDasharray="3 22"
+          strokeDasharray={vein.type === "artery" ? "4 18" : "3 14"}
           style={{
-            animation: `electricFlowFast 1.3s linear ${vein.delay + offset * 0.5}s infinite`,
+            animation: `electricFlowFast ${vein.type === "artery" ? 1.1 : 1.5}s linear ${
+              vein.delay + offset * 0.5
+            }s infinite`,
           }}
         />
       )}
@@ -849,18 +825,19 @@ interface OrganDotProps {
   organ: OrganDef;
   isActive: boolean;
   color: string;
+  onSelect: (key: OrganKey) => void;
 }
 
-function OrganDot({ organ, isActive, color }: OrganDotProps) {
+function OrganDot({ organ, isActive, color, onSelect }: OrganDotProps) {
   const r = isActive ? organ.r + 2 : organ.r;
-  const fill = isActive ? color : "#0a2535";
+  const fill = isActive ? color : "#2d4158";
   const labelY = organ.cy - r - 9;
 
   // Deterministic delay for pulse variation
   const pulseDelay = (hashStr(organ.key) % 12) / 10;
 
   return (
-    <g style={{ willChange: "transform" }}>
+    <g style={{ willChange: "transform", cursor: "pointer" }} onClick={() => onSelect(organ.key)}>
       {/* Ripple ring (active only) */}
       {isActive && (
         <circle
@@ -878,20 +855,61 @@ function OrganDot({ organ, isActive, color }: OrganDotProps) {
         />
       )}
 
-      {/* Main organ dot */}
-      <circle
-        cx={organ.cx}
-        cy={organ.cy}
-        r={r}
-        fill={fill}
-        filter={isActive ? "url(#organGlow)" : undefined}
-        style={{
-          transition: "fill 0.5s ease, r 0.5s ease",
-          animation: isActive
-            ? `organPulse 2s ease-in-out ${pulseDelay}s infinite`
-            : undefined,
-        }}
-      />
+      {/* Main organ shape */}
+      {organ.key === "brain" ? (
+        <ellipse
+          cx={organ.cx}
+          cy={organ.cy}
+          rx={r + 4}
+          ry={r - 4}
+          fill={fill}
+          filter={isActive ? "url(#organGlow)" : undefined}
+          style={{
+            transition: "fill 0.5s ease",
+            animation: isActive ? `organPulse 2s ease-in-out ${pulseDelay}s infinite` : undefined,
+          }}
+        />
+      ) : organ.key === "heart" ? (
+        <path
+          d={`M ${organ.cx} ${organ.cy + 8} C ${organ.cx - 10} ${organ.cy + 1}, ${organ.cx - 20} ${organ.cy - 10}, ${
+            organ.cx - 10
+          } ${organ.cy - 20} C ${organ.cx - 2} ${organ.cy - 26}, ${organ.cx + 8} ${organ.cy - 20}, ${organ.cx + 8} ${
+            organ.cy - 10
+          } C ${organ.cx + 8} ${organ.cy - 2}, ${organ.cx + 2} ${organ.cy + 3}, ${organ.cx} ${organ.cy + 8} Z`}
+          fill={fill}
+          filter={isActive ? "url(#organGlow)" : undefined}
+          style={{
+            transition: "fill 0.5s ease",
+            animation: isActive ? `organPulse 1.2s ease-in-out ${pulseDelay}s infinite` : undefined,
+          }}
+        />
+      ) : organ.key.includes("Kidney") ? (
+        <ellipse
+          cx={organ.cx}
+          cy={organ.cy}
+          rx={r - 2}
+          ry={r + 2}
+          fill={fill}
+          filter={isActive ? "url(#organGlow)" : undefined}
+          style={{
+            transition: "fill 0.5s ease",
+            animation: isActive ? `organPulse 2s ease-in-out ${pulseDelay}s infinite` : undefined,
+          }}
+        />
+      ) : (
+        <ellipse
+          cx={organ.cx}
+          cy={organ.cy}
+          rx={r + 2}
+          ry={r - 1}
+          fill={fill}
+          filter={isActive ? "url(#organGlow)" : undefined}
+          style={{
+            transition: "fill 0.5s ease",
+            animation: isActive ? `organPulse 2s ease-in-out ${pulseDelay}s infinite` : undefined,
+          }}
+        />
+      )}
 
       {/* Label (active only) */}
       {isActive && (

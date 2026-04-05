@@ -1,5 +1,5 @@
 "use client";
-import { PatientStore, ExtractedDoc } from "@/lib/types";
+import { PatientStore, ExtractedDoc, ExtractedMedication } from "@/lib/types";
 
 const KEY = "mv_patient_store_v1";
 
@@ -75,9 +75,12 @@ const seedStore: PatientStore = {
   ],
   profile: {
     name: "Jordan Lee",
+    firstName: "Jordan",
+    lastName: "Lee",
     dob: "1989-04-19",
     sex: "Female",
     email: "jordan.lee@medvault.local",
+    countryCode: "+1",
     phone: "(555) 013-7788",
     primaryCareProvider: "Dr. A. Kumar",
     nextVisitDate: "2026-02-18",
@@ -88,6 +91,7 @@ const seedStore: PatientStore = {
   },
   preferences: {
     theme: "dark",
+    connectedTrackers: [],
   },
   updatedAtISO: new Date().toISOString(),
 };
@@ -133,7 +137,7 @@ export function mergeExtractedDoc(doc: ExtractedDoc) {
 
   // Merge meds (simple “latest wins” dedupe by name)
   const newMeds = doc.medications ?? [];
-  const medMap = new Map<string, any>();
+  const medMap = new Map<string, ExtractedMedication>();
   [...newMeds, ...store.meds].forEach((m) => medMap.set(m.name.toLowerCase(), m));
   store.meds = Array.from(medMap.values()).slice(0, 200);
 

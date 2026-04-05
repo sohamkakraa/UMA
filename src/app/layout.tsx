@@ -1,11 +1,10 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { ChatDock } from "@/components/chat/ChatDock";
 import { ThemeInit } from "@/components/theme/ThemeInit";
 
 export const metadata: Metadata = {
-  title: "MedVault Prototype",
-  description: "Personal medical history vault prototype",
+  title: "UMA — Ur Medical Assistant",
+  description: "UMA is your personal health companion and medical record assistant.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -14,7 +13,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body suppressHydrationWarning className="min-h-screen">
         <ThemeInit />
         {children}
-        <ChatDock />
       </body>
     </html>
   );

@@ -31,8 +31,9 @@ function LoginForm() {
       if (!j.ok) throw new Error(j.error ?? "Login failed");
       router.push(next);
       router.refresh();
-    } catch (e: any) {
-      setErr(e.message ?? "Login failed");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Login failed";
+      setErr(message);
     } finally {
       setLoading(false);
     }
@@ -44,9 +45,9 @@ function LoginForm() {
         <Card className="overflow-hidden">
           <CardHeader>
             <div className="space-y-1">
-              <h1 className="text-2xl font-semibold mv-title">MedVault</h1>
+              <h1 className="text-2xl font-semibold mv-title">UMA</h1>
               <p className="text-sm mv-muted">
-                Your personal medical history vault (prototype).
+                Ur Medical Assistant for your personal health records.
               </p>
             </div>
           </CardHeader>

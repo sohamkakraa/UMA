@@ -14,7 +14,7 @@ const BodySchema = z.object({
 function buildSystemPrompt(store: PatientStore): string {
   const p = store.profile;
   const lines: string[] = [
-    "You are a knowledgeable, warm health companion for a personal health records app called MedVault.",
+    "You are a knowledgeable, warm health companion for UMA (Ur Medical Assistant), a personal health records app.",
     "You help the user understand their own stored medical records. You are NOT a doctor and never diagnose.",
     "Always be supportive, clear, and use plain language — avoid jargon without explanation.",
     "Never alarm the user. Always recommend speaking to a doctor for clinical decisions.",
@@ -118,7 +118,7 @@ function answerFromStore(q: string, store: PatientStore): string {
     return `Conditions on file:\n${store.profile.conditions.map((c) => `• ${c}`).join("\n")}`;
   }
 
-  return "I can answer questions about your stored documents, medications, and lab results. Try asking about your meds, lab trends, or uploaded documents.";
+  return "I can answer questions about your stored records, medications, and lab results. Try asking about your meds, lab trends, or recent reports.";
 }
 
 // ── LLM call (Claude preferred, OpenAI fallback) ─────────────────────────────
@@ -170,8 +170,8 @@ export async function POST(req: Request) {
     try {
       const answer = await answerWithLLM(question, store);
       return NextResponse.json({ ok: true, answer });
-    } catch (err: any) {
-      if (err?.message !== "no_llm") {
+    } catch (err: unknown) {
+      if (!(err instanceof Error) || err.message !== "no_llm") {
         // LLM key exists but call failed — surface the error
         return NextResponse.json(
           { ok: false, answer: "I had trouble reaching my AI service. Please try again in a moment." }
@@ -181,7 +181,8 @@ export async function POST(req: Request) {
       const answer = answerFromStore(question, store);
       return NextResponse.json({ ok: true, answer });
     }
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Chat error" }, { status: 400 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Chat error";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

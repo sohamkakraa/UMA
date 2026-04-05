@@ -8,6 +8,9 @@ export type ExtractedMedication = {
   startDate?: string;
   endDate?: string;
   notes?: string; // adherence notes or med-specific notes
+  stockCount?: number;
+  missedDoses?: number;
+  lastMissedISO?: string;
 };
 
 export type ExtractedLab = {
@@ -44,10 +47,13 @@ export type PatientStore = {
   labs: ExtractedLab[];
   profile: {
     name: string;
+    firstName?: string;
+    lastName?: string;
     dob?: string;
     sex?: string;
     email?: string;
     phone?: string;
+    countryCode?: string;
     primaryCareProvider?: string;
     nextVisitDate?: string;
     trends?: string[];
@@ -57,6 +63,7 @@ export type PatientStore = {
   };
   preferences: {
     theme: "dark" | "light";
+    connectedTrackers?: string[];
   };
   updatedAtISO: string;
 };

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -8,7 +7,9 @@ import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { getStore, saveStore } from "@/lib/store";
-import { Plus, ArrowLeft, LogOut } from "lucide-react";
+import { AppTopNav } from "@/components/nav/AppTopNav";
+import { addTrackerLabData, TRACKERS } from "@/lib/trackers";
+import { Plus, LogOut, Plug, Unplug } from "lucide-react";
 
 export default function ProfilePage() {
   const [store, setStore] = useState(() => getStore());
@@ -16,6 +17,8 @@ export default function ProfilePage() {
   const [conditionInput, setConditionInput] = useState("");
   const [trendOpen, setTrendOpen] = useState(false);
   const providers = ["Dr. A. Kumar", "Dr. Avery Torres", "Dr. Melina Shah", "Dr. Daniel Kim", "Dr. Priya Iyer"];
+  const countryCodes = ["+1", "+44", "+61", "+65", "+91", "+971"];
+  const sexOptions = ["Male", "Female", "Prefer not to say"];
   const trendOptions = [
     "HbA1c",
     "LDL",
@@ -42,6 +45,46 @@ export default function ProfilePage() {
 
   function updateProfile(patch: Partial<typeof store.profile>) {
     const next = { ...store, profile: { ...store.profile, ...patch } };
+    setStore(next);
+    saveStore(next);
+  }
+
+  function saveIdentity(first?: string, last?: string) {
+    const firstTrimmed = (first ?? "").trim();
+    const lastTrimmed = (last ?? "").trim();
+    const full = [firstTrimmed, lastTrimmed].filter(Boolean).join(" ").trim();
+    updateProfile({
+      firstName: firstTrimmed || undefined,
+      lastName: lastTrimmed || undefined,
+      name: full || store.profile.name,
+    });
+  }
+
+  function connectTracker(name: string) {
+    const connected = new Set(store.preferences.connectedTrackers ?? []);
+    connected.add(name);
+    const next = {
+      ...store,
+      labs: addTrackerLabData(store.labs),
+      preferences: {
+        ...store.preferences,
+        connectedTrackers: Array.from(connected),
+      },
+    };
+    setStore(next);
+    saveStore(next);
+  }
+
+  function disconnectTracker(name: string) {
+    const connected = new Set(store.preferences.connectedTrackers ?? []);
+    connected.delete(name);
+    const next = {
+      ...store,
+      preferences: {
+        ...store.preferences,
+        connectedTrackers: Array.from(connected),
+      },
+    };
     setStore(next);
     saveStore(next);
   }
@@ -79,24 +122,13 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen pb-24">
-      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--panel)]/80 backdrop-blur">
-        <div className="mx-auto max-w-5xl px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/dashboard">
-              <Button variant="ghost" className="gap-2">
-                <ArrowLeft className="h-4 w-4" /> Back
-              </Button>
-            </Link>
-            <div>
-              <h1 className="text-lg font-semibold">Profile & Preferences</h1>
-              <p className="text-xs mv-muted">Update core details, allergies, conditions, and theme.</p>
-            </div>
-          </div>
+      <AppTopNav
+        rightSlot={
           <Button variant="ghost" className="gap-2" onClick={logout}>
             <LogOut className="h-4 w-4" /> Logout
           </Button>
-        </div>
-      </header>
+        }
+      />
 
       <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
         <div className="grid gap-4 lg:grid-cols-3">
@@ -104,16 +136,23 @@ export default function ProfilePage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-medium">Patient details</h2>
-                <Badge>{store.profile.name}</Badge>
+                <Badge>{[store.profile.firstName, store.profile.lastName].filter(Boolean).join(" ") || store.profile.name}</Badge>
               </div>
             </CardHeader>
             <CardContent>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="text-xs mv-muted">
-                  Full name
+                  First name(s)
                   <Input
-                    value={store.profile.name}
-                    onChange={(e) => updateProfile({ name: e.target.value })}
+                    value={store.profile.firstName ?? ""}
+                    onChange={(e) => saveIdentity(e.target.value, store.profile.lastName)}
+                  />
+                </label>
+                <label className="text-xs mv-muted">
+                  Last name
+                  <Input
+                    value={store.profile.lastName ?? ""}
+                    onChange={(e) => saveIdentity(store.profile.firstName, e.target.value)}
                   />
                 </label>
                 <label className="text-xs mv-muted">
@@ -126,10 +165,18 @@ export default function ProfilePage() {
                 </label>
                 <label className="text-xs mv-muted">
                   Sex
-                  <Input
+                  <select
+                    className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--fg)]"
                     value={store.profile.sex ?? ""}
-                    onChange={(e) => updateProfile({ sex: e.target.value })}
-                  />
+                    onChange={(e) => updateProfile({ sex: e.target.value || undefined })}
+                  >
+                    <option value="">Select</option>
+                    {sexOptions.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="text-xs mv-muted">
                   Email
@@ -139,13 +186,27 @@ export default function ProfilePage() {
                     onChange={(e) => updateProfile({ email: e.target.value })}
                   />
                 </label>
-                <label className="text-xs mv-muted">
+                <div className="text-xs mv-muted">
                   Phone
-                  <Input
-                    value={store.profile.phone ?? ""}
-                    onChange={(e) => updateProfile({ phone: e.target.value })}
-                  />
-                </label>
+                  <div className="mt-1 grid grid-cols-[110px_1fr] gap-2">
+                    <select
+                      className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--fg)]"
+                      value={store.profile.countryCode ?? "+1"}
+                      onChange={(e) => updateProfile({ countryCode: e.target.value })}
+                    >
+                      {countryCodes.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      value={store.profile.phone ?? ""}
+                      onChange={(e) => updateProfile({ phone: e.target.value })}
+                      placeholder="Phone number"
+                    />
+                  </div>
+                </div>
                 <label className="text-xs mv-muted md:col-span-2">
                   Primary care provider
                   <select
@@ -228,6 +289,29 @@ export default function ProfilePage() {
                 </div>
                 <div className="text-xs mv-muted">
                   Your theme preference is saved locally on this device.
+                </div>
+                <div className="mv-card-muted rounded-2xl p-4">
+                  <p className="text-xs mv-muted">Health trackers</p>
+                  <p className="mt-1 text-sm">Connect trackers to sync required metrics to dashboard.</p>
+                  <div className="mt-3 space-y-2">
+                    {TRACKERS.map((t) => {
+                      const connected = (store.preferences.connectedTrackers ?? []).includes(t);
+                      return (
+                        <div key={t} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 flex items-center justify-between gap-2">
+                          <span className="text-sm">{t}</span>
+                          {connected ? (
+                            <Button variant="ghost" className="h-8 gap-2" onClick={() => disconnectTracker(t)}>
+                              <Unplug className="h-4 w-4" /> Disconnect
+                            </Button>
+                          ) : (
+                            <Button className="h-8 gap-2" onClick={() => connectTracker(t)}>
+                              <Plug className="h-4 w-4" /> Connect
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </CardContent>

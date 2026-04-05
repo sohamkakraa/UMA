@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const PROTECTED_PATHS = ["/dashboard", "/upload"];
+const PROTECTED_PATHS = ["/dashboard", "/chat", "/body", "/docs", "/upload", "/profile"];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const isProtected = PROTECTED_PATHS.some((p) => pathname.startsWith(p));
 
@@ -19,5 +19,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/upload/:path*"],
+  matcher: ["/dashboard/:path*", "/chat/:path*", "/body/:path*", "/docs/:path*", "/upload/:path*", "/profile/:path*"],
 };
