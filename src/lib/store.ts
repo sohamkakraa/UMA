@@ -79,7 +79,7 @@ const seedStore: PatientStore = {
     lastName: "Lee",
     dob: "1989-04-19",
     sex: "Female",
-    email: "jordan.lee@medvault.local",
+    email: "jordan.lee@uma.local",
     countryCode: "+1",
     phone: "(555) 013-7788",
     primaryCareProvider: "Dr. A. Kumar",

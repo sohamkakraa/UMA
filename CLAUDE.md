@@ -1,8 +1,8 @@
-# MedVault — CLAUDE.md
+# UMA — CLAUDE.md
 
 ## Project Vision
 
-MedVault is a personal health companion that bridges the gap between raw medical data and human understanding. The core idea: connect to any hospital or clinic database the user has visited, pull their records into one place, and present everything in plain language that a non-medical person can actually understand and act on.
+UMA (Ur Medical Assistant) is a personal health companion that bridges the gap between raw medical data and human understanding. The core idea: connect to any hospital or clinic database the user has visited, pull their records into one place, and present everything in plain language that a non-medical person can actually understand and act on.
 
 There are two primary views:
 

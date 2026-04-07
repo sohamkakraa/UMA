@@ -1,6 +1,6 @@
-# MedVault
+# UMA
 
-MedVault is a local-first medical record organizer. Upload PDFs (labs, prescriptions, imaging, bills), extract structured data, and view trends in a modern dashboard. All data is stored in your browser’s localStorage.
+UMA (Ur Medical Assistant) is a local-first medical record organizer. Upload PDFs (labs, prescriptions, imaging, bills), extract structured data, and view trends in a modern dashboard. All data is stored in your browser’s localStorage.
 
 ## Features
 - PDF upload + extraction

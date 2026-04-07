@@ -12,7 +12,7 @@ function LoginForm() {
   const next = sp.get("next") ?? "/dashboard";
   const router = useRouter();
 
-  const [email, setEmail] = useState("demo@medvault.local");
+  const [email, setEmail] = useState("demo@uma.local");
   const [password, setPassword] = useState("demo");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
