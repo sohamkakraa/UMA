@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
@@ -15,8 +17,6 @@
     "nanoid": "^5.1.6",
     "next": "16.1.6",
     "openai": "^6.17.0",
-    "pdf-parse": "^1.1.1",
-    "pdfjs-dist": "^2.16.105",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.7.0",
@@ -32,6 +32,7 @@
     "eslint-config-next": "16.1.6",
     "playwright": "^1.59.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

@@ -1,5 +1,15 @@
 "use client";
-import { PatientStore, ExtractedDoc, ExtractedMedication } from "@/lib/types";
+import {
+  PatientStore,
+  ExtractedDoc,
+  ExtractedLab,
+  ExtractedMedication,
+  StandardLexiconEntry,
+  UMA_TRACKER_LAB_SOURCE,
+} from "@/lib/types";
+import { normalizeLabUnitString } from "@/lib/labUnits";
+import { enrichDocFromMarkdown } from "@/lib/parseMarkdownArtifact";
+import { mergeLexiconPatches, resolveCanonicalLabName } from "@/lib/standardized";
 
 const KEY = "mv_patient_store_v1";
 
@@ -74,9 +84,9 @@ const seedStore: PatientStore = {
     { name: "LDL Cholesterol", value: "128", unit: "mg/dL", date: "2025-07-08" },
   ],
   profile: {
-    name: "Jordan Lee",
-    firstName: "Jordan",
-    lastName: "Lee",
+    name: "Soham Kakra",
+    firstName: "Soham",
+    lastName: "Kakra",
     dob: "1989-04-19",
     sex: "Female",
     email: "jordan.lee@uma.local",
@@ -88,16 +98,87 @@ const seedStore: PatientStore = {
     allergies: ["Penicillin", "Peanuts"],
     conditions: ["Prediabetes", "Hyperlipidemia"],
     notes: "Exercises 3x/week. Prefers evening appointments.",
+    bodyMetrics: {
+      heightCm: "165",
+      weightKg: "62",
+    },
+    menstrualCycle: {
+      typicalCycleLengthDays: 28,
+      lastPeriodStartISO: "2026-04-01",
+      flowLogDates: ["2026-04-01", "2026-04-02"],
+    },
   },
   preferences: {
     theme: "dark",
     connectedTrackers: [],
   },
+  standardLexicon: [],
   updatedAtISO: new Date().toISOString(),
 };
 
 function cloneSeed(): PatientStore {
   return JSON.parse(JSON.stringify(seedStore)) as PatientStore;
+}
+
+function labDedupeKey(l: ExtractedLab): string {
+  return `${l.name.toLowerCase()}|${l.date ?? ""}|${l.value}|${l.unit ?? ""}`;
+}
+
+/**
+ * Rebuilds `store.labs` and `store.meds` from remaining documents (plus tracker labs and manually added meds).
+ * Call after removing a document or when fixing drift.
+ */
+export function rebuildLabsAndMedsFromDocuments(store: PatientStore) {
+  const lex = store.standardLexicon ?? [];
+
+  function normalizeLabRow(l: ExtractedLab): ExtractedLab {
+    const name = resolveCanonicalLabName(l.name, lex);
+    const nu = l.unit ? normalizeLabUnitString(l.unit, name) : "";
+    return { ...l, name, unit: nu || l.unit?.trim() || undefined };
+  }
+
+  const seen = new Set<string>();
+  const labsOut: ExtractedLab[] = [];
+
+  for (const doc of store.docs) {
+    const enriched = enrichDocFromMarkdown(doc, lex);
+    for (const raw of enriched.labs ?? []) {
+      const n = normalizeLabRow(raw);
+      const k = labDedupeKey(n);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      labsOut.push({ ...n, sourceDocId: doc.id });
+    }
+  }
+
+  const trackerLabs = store.labs.filter((l) => l.sourceDocId === UMA_TRACKER_LAB_SOURCE);
+  for (const raw of trackerLabs) {
+    const n = normalizeLabRow(raw);
+    const k = labDedupeKey(n);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    labsOut.push({ ...n, sourceDocId: UMA_TRACKER_LAB_SOURCE });
+  }
+
+  store.labs = labsOut.slice(0, 2000);
+
+  const medMap = new Map<string, ExtractedMedication>();
+  for (const doc of store.docs) {
+    const enriched = enrichDocFromMarkdown(doc, lex);
+    for (const m of enriched.medications ?? []) {
+      const k = m.name.toLowerCase();
+      if (!medMap.has(k)) medMap.set(k, { ...m, sourceDocId: doc.id });
+    }
+  }
+
+  for (const m of store.meds) {
+    if (!m.sourceDocId) {
+      const k = m.name.toLowerCase();
+      if (!medMap.has(k)) medMap.set(k, m);
+    }
+  }
+
+  store.meds = Array.from(medMap.values()).slice(0, 200);
 }
 
 /** Same snapshot as server `getStore()` — no `localStorage`. Use for initial React state, then `getStore()` in `useEffect` to hydrate. */
@@ -113,11 +194,43 @@ export function getStore(): PatientStore {
   if (!raw) return cloneSeed();
   try {
     const parsed = JSON.parse(raw) as PatientStore;
+    const savedProfile = parsed.profile ?? {};
+    const seedP = seedStore.profile;
+    const mergedMenstrual = {
+      typicalCycleLengthDays:
+        typeof savedProfile.menstrualCycle?.typicalCycleLengthDays === "number"
+          ? savedProfile.menstrualCycle.typicalCycleLengthDays
+          : seedP.menstrualCycle?.typicalCycleLengthDays ?? 28,
+      lastPeriodStartISO:
+        typeof savedProfile.menstrualCycle?.lastPeriodStartISO === "string"
+          ? savedProfile.menstrualCycle.lastPeriodStartISO
+          : seedP.menstrualCycle?.lastPeriodStartISO,
+      flowLogDates: Array.isArray(savedProfile.menstrualCycle?.flowLogDates)
+        ? savedProfile.menstrualCycle.flowLogDates
+        : seedP.menstrualCycle?.flowLogDates ?? [],
+    };
+
     return {
       ...cloneSeed(),
       ...parsed,
-      profile: { ...seedStore.profile, ...parsed.profile },
+      profile: {
+        ...seedP,
+        ...savedProfile,
+        name: typeof savedProfile.name === "string" ? savedProfile.name : seedP.name,
+        firstName: typeof savedProfile.firstName === "string" ? savedProfile.firstName : seedP.firstName,
+        lastName: typeof savedProfile.lastName === "string" ? savedProfile.lastName : seedP.lastName,
+        allergies: Array.isArray(savedProfile.allergies) ? savedProfile.allergies : seedP.allergies,
+        conditions: Array.isArray(savedProfile.conditions) ? savedProfile.conditions : seedP.conditions,
+        bodyMetrics: {
+          ...(seedP.bodyMetrics ?? {}),
+          ...(savedProfile.bodyMetrics ?? {}),
+        },
+        menstrualCycle: mergedMenstrual,
+      },
       preferences: { ...seedStore.preferences, ...parsed.preferences },
+      standardLexicon: Array.isArray(parsed.standardLexicon)
+        ? parsed.standardLexicon
+        : cloneSeed().standardLexicon,
     };
   } catch {
     return cloneSeed();
@@ -134,36 +247,31 @@ export function saveStore(store: PatientStore) {
   } catch {}
 }
 
-export function mergeExtractedDoc(doc: ExtractedDoc) {
+export function mergeExtractedDoc(
+  doc: ExtractedDoc,
+  opts?: { standardLexiconPatches?: StandardLexiconEntry[] }
+) {
   const store = getStore();
 
+  if (opts?.standardLexiconPatches?.length) {
+    store.standardLexicon = mergeLexiconPatches(store.standardLexicon, opts.standardLexiconPatches);
+  }
+
+  const lex = store.standardLexicon ?? [];
+  const enriched = enrichDocFromMarkdown(doc, lex);
+
   // Add doc
-  store.docs = [doc, ...store.docs].slice(0, 500);
+  store.docs = [enriched, ...store.docs].slice(0, 500);
 
-  // Merge meds (simple “latest wins” dedupe by name)
-  const newMeds = doc.medications ?? [];
-  const medMap = new Map<string, ExtractedMedication>();
-  [...newMeds, ...store.meds].forEach((m) => medMap.set(m.name.toLowerCase(), m));
-  store.meds = Array.from(medMap.values()).slice(0, 200);
-
-  // Merge labs (append; dedupe by name+date+value)
-  const newLabs = doc.labs ?? [];
-  const seen = new Set<string>();
-  const combined = [...newLabs, ...store.labs].filter((l) => {
-    const key = `${l.name.toLowerCase()}|${l.date ?? ""}|${l.value}|${l.unit ?? ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  store.labs = combined.slice(0, 2000);
+  rebuildLabsAndMedsFromDocuments(store);
 
   // Merge allergies / conditions from doc-level extraction
-  if (doc.allergies?.length) {
-    const next = new Set([...(store.profile.allergies ?? []), ...doc.allergies]);
+  if (enriched.allergies?.length) {
+    const next = new Set([...(store.profile.allergies ?? []), ...enriched.allergies]);
     store.profile.allergies = Array.from(next).slice(0, 200);
   }
-  if (doc.conditions?.length) {
-    const next = new Set([...(store.profile.conditions ?? []), ...doc.conditions]);
+  if (enriched.conditions?.length) {
+    const next = new Set([...(store.profile.conditions ?? []), ...enriched.conditions]);
     store.profile.conditions = Array.from(next).slice(0, 200);
   }
 
@@ -173,7 +281,39 @@ export function mergeExtractedDoc(doc: ExtractedDoc) {
 
 export function removeDoc(docId: string) {
   const store = getStore();
+  const deleted = store.docs.find((d) => d.id === docId);
   store.docs = store.docs.filter((d) => d.id !== docId);
+
+  const lex = store.standardLexicon ?? [];
+  if (deleted) {
+    const delEnriched = enrichDocFromMarkdown(deleted, lex);
+
+    const remainingAllergy = new Set<string>();
+    const remainingCondition = new Set<string>();
+    for (const d of store.docs) {
+      enrichDocFromMarkdown(d, lex).allergies?.forEach((a) => remainingAllergy.add(a.trim().toLowerCase()));
+      enrichDocFromMarkdown(d, lex).conditions?.forEach((c) => remainingCondition.add(c.trim().toLowerCase()));
+    }
+
+    if (delEnriched.allergies?.length) {
+      store.profile.allergies = store.profile.allergies.filter((a) => {
+        const al = a.trim().toLowerCase();
+        const inDeleted = delEnriched.allergies!.some((x) => x.trim().toLowerCase() === al);
+        if (!inDeleted) return true;
+        return remainingAllergy.has(al);
+      });
+    }
+    if (delEnriched.conditions?.length) {
+      store.profile.conditions = store.profile.conditions.filter((c) => {
+        const cl = c.trim().toLowerCase();
+        const inDeleted = delEnriched.conditions!.some((x) => x.trim().toLowerCase() === cl);
+        if (!inDeleted) return true;
+        return remainingCondition.has(cl);
+      });
+    }
+  }
+
+  rebuildLabsAndMedsFromDocuments(store);
   saveStore(store);
   return store;
 }

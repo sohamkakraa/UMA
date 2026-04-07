@@ -38,8 +38,12 @@ Open http://localhost:3000
 
 ## Environment Variables
 ```
-OPENAI_API_KEY=your_key
-OPENAI_MODEL=gpt-5-nano
+ANTHROPIC_API_KEY=your_key
+ANTHROPIC_MODEL=claude-haiku-4-5-20251001
+ANTHROPIC_PDF_MODEL=claude-sonnet-4-5-20250929
+# Optional chat fallback:
+# OPENAI_API_KEY=
+# OPENAI_CHAT_MODEL=gpt-4o-mini
 ```
 
 ## Notes

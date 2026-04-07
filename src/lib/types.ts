@@ -1,5 +1,15 @@
 export type DocType = "Lab report" | "Prescription" | "Bill" | "Imaging" | "Other";
 
+/** Synthetic labs from connected trackers (`addTrackerLabData`). */
+export const UMA_TRACKER_LAB_SOURCE = "__uma_tracker__" as const;
+
+/** User- or agent-proposed metric synonyms merged into the runtime lexicon (see `docs/standardized.md`). */
+export type StandardLexiconEntry = {
+  canonical: string;
+  synonyms: string[];
+  panel?: string;
+};
+
 export type ExtractedMedication = {
   name: string;
   dose?: string;
@@ -11,6 +21,8 @@ export type ExtractedMedication = {
   stockCount?: number;
   missedDoses?: number;
   lastMissedISO?: string;
+  /** Set when this row was derived from a document during rebuild. */
+  sourceDocId?: string;
 };
 
 export type ExtractedLab = {
@@ -19,6 +31,8 @@ export type ExtractedLab = {
   unit?: string;
   refRange?: string;
   date?: string;
+  /** Document id, or `UMA_TRACKER_LAB_SOURCE` for demo tracker rows. */
+  sourceDocId?: string;
 };
 
 export type ExtractedSection = {
@@ -39,6 +53,42 @@ export type ExtractedDoc = {
   allergies?: string[];
   conditions?: string[];
   sections?: ExtractedSection[];
+  /** Original PDF filename from upload. */
+  originalFileName?: string;
+  /** When the file was processed in UMA (ISO timestamp). */
+  uploadedAtISO?: string;
+  /** SHA-256 of normalized extracted text — duplicate detection. */
+  contentHash?: string;
+  /** Generated markdown artifact (same idea as a per-document `.md` file). */
+  markdownArtifact?: string;
+  /** Stable display slug, e.g. `bloodReport_23_03_2026`. */
+  artifactSlug?: string;
+  doctors?: string[];
+  facilityName?: string;
+  /** Base64-encoded original PDF (saved when confirming an upload from this device). */
+  originalPdfBase64?: string;
+};
+
+/** Optional vitals for charts and visit summaries (strings for flexible local formats). */
+export type BodyMetrics = {
+  heightCm?: string;
+  weightKg?: string;
+  waistCm?: string;
+  bloodPressureSys?: string;
+  bloodPressureDia?: string;
+};
+
+/**
+ * Beta cycle logging — stored locally. Not a medical device.
+ * Shown on profile for all users during beta; refine by sex later if needed.
+ */
+export type MenstrualCyclePrefs = {
+  /** Typical cycle length in days (21–45 clamped in UI logic). */
+  typicalCycleLengthDays?: number;
+  /** First day of last period (YYYY-MM-DD). */
+  lastPeriodStartISO?: string;
+  /** Calendar days when flow was logged (YYYY-MM-DD). */
+  flowLogDates?: string[];
 };
 
 export type PatientStore = {
@@ -60,10 +110,14 @@ export type PatientStore = {
     allergies: string[];
     conditions: string[];
     notes?: string;
+    bodyMetrics?: BodyMetrics;
+    menstrualCycle?: MenstrualCyclePrefs;
   };
   preferences: {
     theme: "dark" | "light";
     connectedTrackers?: string[];
   };
+  /** Merged with `DEFAULT_LEXICON` for resolving lab keys and charts. */
+  standardLexicon?: StandardLexiconEntry[];
   updatedAtISO: string;
 };

@@ -1,4 +1,4 @@
-import type { ExtractedLab } from "@/lib/types";
+import { type ExtractedLab, UMA_TRACKER_LAB_SOURCE } from "@/lib/types";
 
 export const TRACKERS = ["Apple Health", "Fitbit", "Garmin"] as const;
 export const REQUIRED_TRACKER_METRICS = ["HbA1c", "LDL", "Glucose", "HDL"] as const;
@@ -22,6 +22,7 @@ export function addTrackerLabData(existing: ExtractedLab[]): ExtractedLab[] {
         value: v,
         unit: m.unit,
         date: d.toISOString().slice(0, 10),
+        sourceDocId: UMA_TRACKER_LAB_SOURCE,
       });
     });
   });

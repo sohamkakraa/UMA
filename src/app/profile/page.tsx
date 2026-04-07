@@ -9,13 +9,14 @@ import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { getHydrationSafeStore, getStore, saveStore } from "@/lib/store";
 import { AppTopNav } from "@/components/nav/AppTopNav";
 import { addTrackerLabData, TRACKERS } from "@/lib/trackers";
-import { Plus, LogOut, Plug, Unplug } from "lucide-react";
+import { Droplets, Plus, LogOut, Plug, Ruler, Unplug } from "lucide-react";
 
 export default function ProfilePage() {
   const [store, setStore] = useState(() => getHydrationSafeStore());
   const [allergyInput, setAllergyInput] = useState("");
   const [conditionInput, setConditionInput] = useState("");
   const [trendOpen, setTrendOpen] = useState(false);
+  const [flowDateInput, setFlowDateInput] = useState("");
   const providers = ["Dr. A. Kumar", "Dr. Avery Torres", "Dr. Melina Shah", "Dr. Daniel Kim", "Dr. Priya Iyer"];
   const countryCodes = ["+1", "+44", "+61", "+65", "+91", "+971"];
   const sexOptions = ["Male", "Female", "Prefer not to say"];
@@ -35,8 +36,13 @@ export default function ProfilePage() {
   useEffect(() => {
     setStore(getStore());
     const onFocus = () => setStore(getStore());
+    const onStoreUpdate = () => setStore(getStore());
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    window.addEventListener("mv-store-update", onStoreUpdate as EventListener);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("mv-store-update", onStoreUpdate as EventListener);
+    };
   }, []);
 
   async function logout() {
@@ -50,14 +56,46 @@ export default function ProfilePage() {
     saveStore(next);
   }
 
+  function updateBodyMetrics(patch: Partial<NonNullable<typeof store.profile.bodyMetrics>>) {
+    updateProfile({
+      bodyMetrics: { ...(store.profile.bodyMetrics ?? {}), ...patch },
+    });
+  }
+
+  function updateMenstrualCycle(patch: Partial<NonNullable<typeof store.profile.menstrualCycle>>) {
+    const cur = store.profile.menstrualCycle ?? { flowLogDates: [] };
+    updateProfile({
+      menstrualCycle: {
+        ...cur,
+        ...patch,
+        flowLogDates: patch.flowLogDates ?? cur.flowLogDates ?? [],
+      },
+    });
+  }
+
+  function addFlowDay() {
+    const d = flowDateInput.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+    const cur = store.profile.menstrualCycle?.flowLogDates ?? [];
+    if (cur.includes(d)) return setFlowDateInput("");
+    updateMenstrualCycle({ flowLogDates: [...cur, d].sort() });
+    setFlowDateInput("");
+  }
+
+  function removeFlowDay(d: string) {
+    const cur = store.profile.menstrualCycle?.flowLogDates ?? [];
+    updateMenstrualCycle({ flowLogDates: cur.filter((x) => x !== d) });
+  }
+
   function saveIdentity(first?: string, last?: string) {
     const firstTrimmed = (first ?? "").trim();
     const lastTrimmed = (last ?? "").trim();
     const full = [firstTrimmed, lastTrimmed].filter(Boolean).join(" ").trim();
+    // Always persist strings (never undefined) so JSON/localStorage keeps keys and getStore() does not fall back to seed defaults.
     updateProfile({
-      firstName: firstTrimmed || undefined,
-      lastName: lastTrimmed || undefined,
-      name: full || store.profile.name,
+      firstName: firstTrimmed,
+      lastName: lastTrimmed,
+      name: full,
     });
   }
 
@@ -313,6 +351,145 @@ export default function ProfilePage() {
                       );
                     })}
                   </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Ruler className="h-4 w-4 text-[var(--accent)]" />
+                <h2 className="text-sm font-medium">Body metrics</h2>
+              </div>
+              <p className="text-xs mv-muted mt-1">
+                Optional numbers for your own tracking. Use centimetres and kilograms for BMI, or leave blank.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="text-xs mv-muted">
+                  Height (cm)
+                  <Input
+                    inputMode="decimal"
+                    placeholder="e.g. 165"
+                    value={store.profile.bodyMetrics?.heightCm ?? ""}
+                    onChange={(e) => updateBodyMetrics({ heightCm: e.target.value || undefined })}
+                  />
+                </label>
+                <label className="text-xs mv-muted">
+                  Weight (kg)
+                  <Input
+                    inputMode="decimal"
+                    placeholder="e.g. 62"
+                    value={store.profile.bodyMetrics?.weightKg ?? ""}
+                    onChange={(e) => updateBodyMetrics({ weightKg: e.target.value || undefined })}
+                  />
+                </label>
+                <label className="text-xs mv-muted">
+                  Waist (cm)
+                  <Input
+                    inputMode="decimal"
+                    placeholder="Optional"
+                    value={store.profile.bodyMetrics?.waistCm ?? ""}
+                    onChange={(e) => updateBodyMetrics({ waistCm: e.target.value || undefined })}
+                  />
+                </label>
+                <div className="text-xs mv-muted sm:col-span-2">
+                  Blood pressure (mmHg)
+                  <div className="mt-1 grid grid-cols-2 gap-2 max-w-xs">
+                    <Input
+                      inputMode="numeric"
+                      placeholder="Systolic"
+                      value={store.profile.bodyMetrics?.bloodPressureSys ?? ""}
+                      onChange={(e) => updateBodyMetrics({ bloodPressureSys: e.target.value || undefined })}
+                    />
+                    <Input
+                      inputMode="numeric"
+                      placeholder="Diastolic"
+                      value={store.profile.bodyMetrics?.bloodPressureDia ?? ""}
+                      onChange={(e) => updateBodyMetrics({ bloodPressureDia: e.target.value || undefined })}
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Droplets className="h-4 w-4 text-[var(--accent-2)]" />
+                <h2 className="text-sm font-medium">Cycle tracking (beta)</h2>
+              </div>
+              <p className="text-xs mv-muted mt-1">
+                For beta testing this appears for everyone. Estimates are approximate and not medical advice. Your
+                clinician can help interpret symptoms and timing.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <label className="text-xs mv-muted block">
+                Typical cycle length (days)
+                <Input
+                  type="number"
+                  min={21}
+                  max={45}
+                  className="mt-1 max-w-[120px]"
+                  value={store.profile.menstrualCycle?.typicalCycleLengthDays ?? 28}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!Number.isFinite(n)) return;
+                    updateMenstrualCycle({ typicalCycleLengthDays: Math.min(45, Math.max(21, n)) });
+                  }}
+                />
+              </label>
+              <label className="text-xs mv-muted block">
+                First day of last period
+                <Input
+                  type="date"
+                  className="mt-1 max-w-[220px]"
+                  value={store.profile.menstrualCycle?.lastPeriodStartISO ?? ""}
+                  onChange={(e) =>
+                    updateMenstrualCycle({ lastPeriodStartISO: e.target.value || undefined })
+                  }
+                />
+              </label>
+              <div>
+                <p className="text-xs mv-muted">Log flow days</p>
+                <p className="text-[11px] mv-muted mt-0.5">
+                  Add a date when you had bleeding so your dashboard can reflect it.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Input
+                    type="date"
+                    className="max-w-[180px]"
+                    value={flowDateInput}
+                    onChange={(e) => setFlowDateInput(e.target.value)}
+                  />
+                  <Button type="button" className="gap-2" onClick={addFlowDay}>
+                    <Plus className="h-4 w-4" /> Log day
+                  </Button>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(store.profile.menstrualCycle?.flowLogDates ?? [])
+                    .slice()
+                    .sort()
+                    .reverse()
+                    .map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1 text-xs"
+                        onClick={() => removeFlowDay(d)}
+                      >
+                        {d} <span className="text-[10px] mv-muted">remove</span>
+                      </button>
+                    ))}
+                  {!store.profile.menstrualCycle?.flowLogDates?.length && (
+                    <span className="text-sm mv-muted">No flow days logged yet.</span>
+                  )}
                 </div>
               </div>
             </CardContent>

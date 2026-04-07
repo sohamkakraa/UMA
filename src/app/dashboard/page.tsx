@@ -1,19 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { AppTopNav } from "@/components/nav/AppTopNav";
+import { LabReadingTile } from "@/components/labs/LabReadingTile";
+import { RecordNoticeToast } from "@/components/ui/RecordNoticeToast";
 import { getHydrationSafeStore, getStore, saveStore, removeDoc, mergeExtractedDoc } from "@/lib/store";
-import { DocType, ExtractedDoc, ExtractedLab, ExtractedMedication } from "@/lib/types";
+import { DocType, ExtractedDoc, ExtractedLab, ExtractedMedication, StandardLexiconEntry } from "@/lib/types";
+import { displaySummaryForDoc } from "@/lib/markdownDoc";
+import { labMatchesTrendMetric } from "@/lib/standardized";
 import { REQUIRED_TRACKER_METRICS } from "@/lib/trackers";
+import { summarizeMenstrualCycle } from "@/lib/menstrualCycle";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   Activity,
+  AlertTriangle,
   Calendar,
   ClipboardList,
   Info,
@@ -27,11 +33,12 @@ import {
   Trash2,
   User,
   X,
+  Droplets,
 } from "lucide-react";
 
-function toChartPoints(labs: ExtractedLab[], metricName: string) {
+function toChartPoints(labs: ExtractedLab[], metricName: string, extensions?: StandardLexiconEntry[]) {
   const filtered = labs
-    .filter((l) => l.name.toLowerCase().includes(metricName.toLowerCase()))
+    .filter((l) => labMatchesTrendMetric(l.name, metricName, extensions))
     .map((l) => ({
       date: l.date ?? "",
       value: parseFloat(String(l.value).replace(/[^\d.]/g, "")) || null,
@@ -141,6 +148,13 @@ export default function DashboardPage() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPreview, setUploadPreview] = useState<ExtractedDoc | null>(null);
+  const [uploadLexiconPatches, setUploadLexiconPatches] = useState<StandardLexiconEntry[]>([]);
+  const [uploadNameMismatch, setUploadNameMismatch] = useState<{
+    namesOnDocument: string[];
+    profileDisplayName: string;
+  } | null>(null);
+  const [recordNotice, setRecordNotice] = useState<string | null>(null);
+  const dismissRecordNotice = useCallback(() => setRecordNotice(null), []);
   const [newMed, setNewMed] = useState<ExtractedMedication>({
     name: "",
     dose: "",
@@ -219,19 +233,57 @@ export default function DashboardPage() {
     setNewMed({ name: "", dose: "", frequency: "" });
   }
 
+  function readFileAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const r = reader.result as string;
+        const comma = r.indexOf(",");
+        resolve(comma >= 0 ? r.slice(comma + 1) : r);
+      };
+      reader.onerror = () => reject(reader.error ?? new Error("Read failed"));
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function extractUploadDoc() {
     if (!uploadFile) return;
     setUploadError(null);
     setUploadLoading(true);
     setUploadPreview(null);
+    setUploadLexiconPatches([]);
+    setUploadNameMismatch(null);
     try {
       const fd = new FormData();
       fd.append("file", uploadFile);
       fd.append("typeHint", uploadType);
+      fd.append("patientName", store.profile.name?.trim() ?? "");
+      fd.append(
+        "existingContentHashes",
+        JSON.stringify(store.docs.map((d) => d.contentHash).filter(Boolean))
+      );
+      fd.append("standardLexicon", JSON.stringify(store.standardLexicon ?? []));
       const r = await fetch("/api/extract", { method: "POST", body: fd });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error ?? "Extraction failed");
-      setUploadPreview(j.doc as ExtractedDoc);
+      if (r.ok) {
+        setUploadPreview(j.doc as ExtractedDoc);
+        setUploadLexiconPatches((j.lexiconPatches as StandardLexiconEntry[]) ?? []);
+        setRecordNotice("Extract ready — review the summary below, then confirm to add it to your records.");
+        return;
+      }
+      if (j.code === "patient_name_mismatch" && j.doc) {
+        setUploadPreview(j.doc as ExtractedDoc);
+        setUploadLexiconPatches((j.lexiconPatches as StandardLexiconEntry[]) ?? []);
+        setUploadNameMismatch({
+          namesOnDocument: Array.isArray(j.namesOnDocument) ? j.namesOnDocument : [],
+          profileDisplayName: String(j.profileDisplayName ?? ""),
+        });
+        setRecordNotice(
+          "The name on this PDF does not match your profile — read the comparison below, then choose whether to add it."
+        );
+        return;
+      }
+      throw new Error(j?.error ?? "Extraction failed");
     } catch (e: unknown) {
       setUploadError(e instanceof Error ? e.message : "Extraction failed");
     } finally {
@@ -239,14 +291,28 @@ export default function DashboardPage() {
     }
   }
 
-  function commitUploadDoc() {
+  async function commitUploadDoc() {
     if (!uploadPreview) return;
-    const next = mergeExtractedDoc(uploadPreview);
+    let doc: ExtractedDoc = uploadPreview;
+    if (uploadFile) {
+      try {
+        const originalPdfBase64 = await readFileAsBase64(uploadFile);
+        doc = { ...uploadPreview, originalPdfBase64 };
+      } catch {
+        doc = uploadPreview;
+      }
+    }
+    const next = mergeExtractedDoc(doc, {
+      standardLexiconPatches: uploadLexiconPatches,
+    });
     setStore(next);
     setUploadFile(null);
     setUploadPreview(null);
+    setUploadLexiconPatches([]);
+    setUploadNameMismatch(null);
     setUploadError(null);
     setOverlay(null);
+    setRecordNotice("New data added. Your dashboard, documents list, and charts now include this report.");
   }
 
   function exportPdf() {
@@ -265,22 +331,23 @@ export default function DashboardPage() {
     setTimeout(() => medNameInputRef.current?.focus(), 60);
   }
 
-  const hba1c = useMemo(() => toChartPoints(store.labs, "hba1c"), [store.labs]);
-  const ldl = useMemo(() => toChartPoints(store.labs, "ldl"), [store.labs]);
+  const lex = store.standardLexicon;
+  const hba1c = useMemo(() => toChartPoints(store.labs, "HbA1c", lex), [store.labs, lex]);
+  const ldl = useMemo(() => toChartPoints(store.labs, "LDL", lex), [store.labs, lex]);
   const trendMap: Record<string, Array<{ date: string; value: number | null }>> = useMemo(
     () => ({
       HbA1c: hba1c,
       LDL: ldl,
-      HDL: toChartPoints(store.labs, "hdl"),
-      Triglycerides: toChartPoints(store.labs, "triglycer"),
-      Glucose: toChartPoints(store.labs, "glucose"),
-      RBC: toChartPoints(store.labs, "rbc"),
-      WBC: toChartPoints(store.labs, "wbc"),
-      Hemoglobin: toChartPoints(store.labs, "hemoglobin"),
-      Platelets: toChartPoints(store.labs, "platelet"),
-      Creatinine: toChartPoints(store.labs, "creatinine"),
+      HDL: toChartPoints(store.labs, "HDL", lex),
+      Triglycerides: toChartPoints(store.labs, "Triglycerides", lex),
+      Glucose: toChartPoints(store.labs, "Glucose", lex),
+      RBC: toChartPoints(store.labs, "RBC", lex),
+      WBC: toChartPoints(store.labs, "WBC", lex),
+      Hemoglobin: toChartPoints(store.labs, "Hemoglobin", lex),
+      Platelets: toChartPoints(store.labs, "Platelets", lex),
+      Creatinine: toChartPoints(store.labs, "Creatinine", lex),
     }),
-    [hba1c, ldl, store.labs]
+    [hba1c, ldl, store.labs, lex]
   );
   const selectedTrends =
     (store.preferences.connectedTrackers?.length ?? 0) > 0
@@ -308,6 +375,20 @@ export default function DashboardPage() {
   }, [store.docs]);
   const recentMeds = useMemo(() => store.meds.slice(0, 20), [store.meds]);
 
+  const cycleSummary = useMemo(
+    () => summarizeMenstrualCycle(store.profile.menstrualCycle),
+    [store.profile.menstrualCycle]
+  );
+
+  const flowPreview = useMemo(() => {
+    const d = store.profile.menstrualCycle?.flowLogDates ?? [];
+    return d
+      .slice()
+      .sort()
+      .reverse()
+      .slice(0, 4);
+  }, [store.profile.menstrualCycle?.flowLogDates]);
+
   const inlineDocs = recentDocs.slice(0, 4);
   const inlineMeds = recentMeds.slice(0, 4);
   const inlineLabs = recentLabs.slice(0, 9);
@@ -320,6 +401,13 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen pb-24">
+      <style>{`
+        @keyframes umaExtractBar {
+          0% { transform: translateX(-100%); opacity: 0.85; }
+          50% { transform: translateX(80%); opacity: 1; }
+          100% { transform: translateX(280%); opacity: 0.85; }
+        }
+      `}</style>
       <AppTopNav
         rightSlot={
           <Button className="h-9 gap-2" onClick={() => setOverlay("upload-report")}>
@@ -346,6 +434,17 @@ export default function DashboardPage() {
                 <Badge>{store.profile.conditions.length} conditions</Badge>
                 <Badge>{store.profile.allergies.length} allergies</Badge>
                 <Badge>{store.docs.length} documents</Badge>
+                {store.profile.menstrualCycle?.lastPeriodStartISO ||
+                (store.profile.menstrualCycle?.flowLogDates?.length ?? 0) > 0 ? (
+                  <span title={`${cycleSummary.headline} · ${cycleSummary.detail}`} className="inline-block max-w-[min(100%,20rem)]">
+                    <Badge className="max-w-full truncate inline-flex">
+                      <Droplets className="mr-1 h-3 w-3 shrink-0" />
+                      <span className="truncate">
+                        {cycleSummary.headline} · {cycleSummary.detail}
+                      </span>
+                    </Badge>
+                  </span>
+                ) : null}
               </div>
             </div>
             <Card className="rounded-2xl">
@@ -372,6 +471,33 @@ export default function DashboardPage() {
             </Card>
           </div>
         </section>
+
+        <Card>
+          <CardContent className="py-3 px-4 flex flex-wrap items-center gap-x-3 gap-y-2 justify-between">
+            <div className="flex items-start gap-2 min-w-0 flex-1">
+              <Droplets className="h-4 w-4 shrink-0 mt-0.5 text-[var(--accent-2)]" aria-hidden />
+              <div className="min-w-0 text-sm leading-snug">
+                <span className="font-medium text-[var(--fg)]">{cycleSummary.headline}</span>
+                <span className="mv-muted"> · </span>
+                <span className="mv-muted">{cycleSummary.detail}</span>
+                {flowPreview.length > 0 ? (
+                  <span className="mv-muted">
+                    {" "}
+                    · Flow: {flowPreview.join(", ")}
+                    {(store.profile.menstrualCycle?.flowLogDates?.length ?? 0) > flowPreview.length ? "…" : ""}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              className="h-8 text-xs shrink-0"
+              onClick={() => (window.location.href = "/profile")}
+            >
+              Edit
+            </Button>
+          </CardContent>
+        </Card>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Card>
@@ -433,7 +559,7 @@ export default function DashboardPage() {
                           <a href={`/docs/${d.id}`} className="mt-2 block text-sm font-semibold hover:underline">
                             {d.title}
                           </a>
-                          <p className="mt-1 text-xs mv-muted">{d.summary}</p>
+                          <p className="mt-1 text-xs mv-muted line-clamp-3">{displaySummaryForDoc(d)}</p>
                         </div>
                         <button
                           type="button"
@@ -558,20 +684,20 @@ export default function DashboardPage() {
               },
             };
             return (
-              <Card key={name} className="overflow-hidden">
+              <Card key={name} className="min-w-0">
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-sm font-medium">{name} trend</h2>
-                    <Badge>Lifetime</Badge>
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <h2 className="text-sm font-medium truncate">{name} trend</h2>
+                    <Badge className="shrink-0">Lifetime</Badge>
                   </div>
                 </CardHeader>
-                <CardContent className="h-72 min-w-0">
+                <CardContent className="h-72 min-w-0 pl-2 pr-3 sm:pl-3 sm:pr-4">
                   {!chartsReady ? (
                     <div className="h-full rounded-2xl border border-dashed border-[var(--border)] bg-[var(--panel-2)] animate-pulse" />
                   ) : (
                     <ChartContainer config={chartConfig}>
                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={220}>
-                        <AreaChart data={data} margin={{ left: 4, right: 8, top: 8, bottom: 6 }}>
+                        <AreaChart data={data} margin={{ left: 4, right: 10, top: 10, bottom: 8 }}>
                           <defs>
                             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                               <stop offset="0%" stopColor={accent} stopOpacity={0.4} />
@@ -584,7 +710,14 @@ export default function DashboardPage() {
                             stroke="var(--muted)"
                             tickLine={false}
                             axisLine={false}
-                            width={34}
+                            width={52}
+                            tickMargin={6}
+                            tick={{ fill: "var(--muted)", fontSize: 11 }}
+                            tickFormatter={(v) => {
+                              const n = Number(v);
+                              if (!Number.isFinite(n)) return String(v);
+                              return Math.abs(n) >= 100 ? String(Math.round(n)) : n.toFixed(1).replace(/\.0$/, "");
+                            }}
                             domain={[(min: number) => min * 0.96, (max: number) => max * 1.04]}
                           />
                           <Tooltip content={<ChartTooltipContent />} />
@@ -633,14 +766,7 @@ export default function DashboardPage() {
             ) : (
               <div className="max-h-[300px] overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                 {inlineLabs.map((lab, idx) => (
-                  <div key={`${lab.name}-${idx}`} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm">
-                    <span className="font-medium">{lab.name}</span>
-                    <div className="font-semibold mt-1">
-                      {lab.value}
-                      {lab.unit ? ` ${lab.unit}` : ""}
-                    </div>
-                    <div className="text-xs mv-muted mt-1">{lab.date || "-"}</div>
-                  </div>
+                  <LabReadingTile key={`${lab.name}-${lab.date}-${idx}`} lab={lab} extensions={lex} />
                 ))}
               </div>
             )}
@@ -671,6 +797,12 @@ export default function DashboardPage() {
             <p className="text-sm">
               DOB: {store.profile.dob ?? "—"} · Sex: {store.profile.sex ?? "—"} · Email: {store.profile.email ?? "—"}
             </p>
+            {(store.profile.menstrualCycle?.lastPeriodStartISO ||
+              (store.profile.menstrualCycle?.flowLogDates?.length ?? 0) > 0) && (
+              <p className="text-sm mt-2">
+                Cycle (beta): {cycleSummary.headline} · {cycleSummary.detail}
+              </p>
+            )}
           </div>
 
           <div>
@@ -714,10 +846,16 @@ export default function DashboardPage() {
       </section>
 
       {overlay && (
-        <div className="fixed inset-0 z-50 no-print">
-          <div className="absolute inset-0 bg-black/45" onClick={() => setOverlay(null)} />
-          <div className="absolute inset-x-4 top-8 bottom-8 md:inset-x-20 rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
+        <div className="fixed inset-0 z-50 no-print flex items-end justify-center p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:items-center sm:p-5">
+          <div
+            className={`absolute inset-0 bg-black/45 ${uploadLoading ? "cursor-wait" : ""}`}
+            onClick={() => {
+              if (!uploadLoading) setOverlay(null);
+            }}
+            aria-hidden={uploadLoading}
+          />
+          <div className="relative z-10 flex w-full max-w-4xl max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl sm:max-h-[min(90dvh,52rem)]">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-4">
               <h3 className="font-semibold">
                 {overlay === "reports"
                   ? "All reports"
@@ -733,14 +871,17 @@ export default function DashboardPage() {
               </h3>
               <button
                 type="button"
-                onClick={() => setOverlay(null)}
-                className="h-8 w-8 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] text-[var(--fg)] grid place-items-center"
+                disabled={uploadLoading}
+                onClick={() => {
+                  if (!uploadLoading) setOverlay(null);
+                }}
+                className="h-8 w-8 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] text-[var(--fg)] grid place-items-center disabled:opacity-40 disabled:pointer-events-none"
                 aria-label="Close"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="h-[calc(100%-65px)] overflow-y-auto p-4">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
               {overlay === "add-med" && (
                 <div className="mx-auto max-w-md space-y-3">
                   <p className="text-sm mv-muted">
@@ -807,6 +948,18 @@ export default function DashboardPage() {
                       onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
                       className="block w-full text-sm text-[var(--fg)] file:mr-4 file:rounded-xl file:border-0 file:bg-[var(--accent)] file:px-4 file:py-2 file:text-sm file:font-medium file:text-[var(--accent-contrast)] hover:file:brightness-110"
                     />
+                    {overlay === "upload-report" && !store.profile.name?.trim() ? (
+                      <div className="flex gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">
+                        <Info className="h-4 w-4 shrink-0 text-[var(--accent)] mt-0.5" aria-hidden />
+                        <p>
+                          Add your full name on the{" "}
+                          <Link href="/profile" className="text-[var(--accent)] underline underline-offset-2 font-medium">
+                            Profile
+                          </Link>{" "}
+                          page so UMA can check that uploaded reports match you. Without a name, that step is skipped.
+                        </p>
+                      </div>
+                    ) : null}
                     {uploadError && (
                       <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700">
                         {uploadError}
@@ -819,9 +972,12 @@ export default function DashboardPage() {
                       </Button>
                       <Button
                         variant="ghost"
+                        disabled={uploadLoading}
                         onClick={() => {
                           setUploadFile(null);
                           setUploadPreview(null);
+                          setUploadLexiconPatches([]);
+                          setUploadNameMismatch(null);
                           setUploadError(null);
                           setOverlay(null);
                         }}
@@ -833,18 +989,89 @@ export default function DashboardPage() {
 
                   {uploadPreview && (
                     <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4 space-y-3">
+                      {uploadNameMismatch ? (
+                        <div className="rounded-xl border border-amber-500/45 bg-amber-500/10 p-3 text-sm text-[var(--fg)] space-y-2">
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" aria-hidden />
+                            <div className="space-y-1 min-w-0">
+                              <p className="font-medium">Patient name does not match your profile</p>
+                              <p className="text-xs mv-muted leading-relaxed">
+                                UMA compares the name on your{" "}
+                                <Link href="/profile" className="text-[var(--accent)] underline underline-offset-2">
+                                  Profile
+                                </Link>{" "}
+                                to names the document shows. Here is what we read:
+                              </p>
+                              <ul className="text-xs list-disc pl-4 space-y-0.5">
+                                <li>
+                                  <span className="mv-muted">Your profile name:</span>{" "}
+                                  <span className="font-medium text-[var(--fg)]">
+                                    {uploadNameMismatch.profileDisplayName.trim()
+                                      ? `"${uploadNameMismatch.profileDisplayName.trim()}"`
+                                      : "(not set)"}
+                                  </span>
+                                </li>
+                                <li>
+                                  <span className="mv-muted">Name(s) read from this PDF:</span>{" "}
+                                  <span className="font-medium text-[var(--fg)]">
+                                    {uploadNameMismatch.namesOnDocument.length > 0
+                                      ? uploadNameMismatch.namesOnDocument.map((n) => `"${n.trim()}"`).join(", ")
+                                      : "(none detected — the scan may be unclear)"}
+                                  </span>
+                                </li>
+                              </ul>
+                              <p className="text-xs mv-muted leading-relaxed pt-1">
+                                If this is still your report (nickname, maiden name, typo, or you are helping a family
+                                member), you can add it anyway. If it is someone else&apos;s file by mistake, use{" "}
+                                <span className="font-medium text-[var(--fg)]">Choose a different PDF</span> below.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                       <div>
                         <p className="text-sm font-semibold">{uploadPreview.title}</p>
-                        <p className="text-xs mv-muted mt-1">{uploadPreview.summary}</p>
+                        <p className="text-xs mv-muted mt-1 line-clamp-3">{displaySummaryForDoc(uploadPreview)}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Badge>{uploadPreview.type}</Badge>
                         {uploadPreview.dateISO ? <Badge>Date: {uploadPreview.dateISO}</Badge> : null}
                         {uploadPreview.provider ? <Badge>Provider: {uploadPreview.provider}</Badge> : null}
+                        {uploadPreview.artifactSlug ? (
+                          <Badge className="font-mono text-[10px]">{uploadPreview.artifactSlug}.md</Badge>
+                        ) : null}
                       </div>
-                      <div className="flex gap-2">
-                        <Button onClick={commitUploadDoc}>Confirm & add to dashboard</Button>
-                        <Button variant="ghost" onClick={() => setUploadPreview(null)}>
+                      {uploadPreview.markdownArtifact ? (
+                        <p className="text-xs mv-muted">
+                          A structured markdown summary was generated for this upload. You can read it on the record
+                          detail page after you confirm.
+                        </p>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={() => void commitUploadDoc()}>
+                          {uploadNameMismatch ? "Add to dashboard anyway" : "Confirm & add to dashboard"}
+                        </Button>
+                        {uploadNameMismatch ? (
+                          <Button
+                            variant="ghost"
+                            onClick={() => {
+                              setUploadFile(null);
+                              setUploadPreview(null);
+                              setUploadLexiconPatches([]);
+                              setUploadNameMismatch(null);
+                            }}
+                          >
+                            Choose a different PDF
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            setUploadPreview(null);
+                            setUploadLexiconPatches([]);
+                            setUploadNameMismatch(null);
+                          }}
+                        >
                           Discard
                         </Button>
                       </div>
@@ -862,7 +1089,7 @@ export default function DashboardPage() {
                       </Link>
                       <span className="text-xs mv-muted">{d.dateISO || "-"}</span>
                     </div>
-                    <p className="text-xs mv-muted mt-1">{d.summary}</p>
+                    <p className="text-xs mv-muted mt-1 line-clamp-3">{displaySummaryForDoc(d)}</p>
                   </div>
                 ))}
               {overlay === "meds" &&
@@ -872,21 +1099,45 @@ export default function DashboardPage() {
                     <p className="text-xs mv-muted mt-1">{[m.dose, m.frequency].filter(Boolean).join(" · ") || "Details not added"}</p>
                   </div>
                 ))}
-              {overlay === "labs" &&
-                recentLabs.map((l, i) => (
-                  <div key={`${l.name}-overlay-${i}`} className="mb-2 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3 flex items-center justify-between gap-2">
-                    <span className="font-medium">{l.name}</span>
-                    <span className="text-sm">
-                      {l.value}
-                      {l.unit ? ` ${l.unit}` : ""}
-                    </span>
-                    <span className="text-xs mv-muted">{l.date || "-"}</span>
-                  </div>
-                ))}
+              {overlay === "labs" && (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {recentLabs.map((l, i) => (
+                    <LabReadingTile key={`${l.name}-overlay-${i}`} lab={l} extensions={lex} />
+                  ))}
+                </div>
+              )}
             </div>
+
+            {uploadLoading && (overlay === "upload-report" || overlay === "add-report") ? (
+              <div
+                className="absolute inset-0 z-[60] overflow-y-auto overscroll-contain rounded-3xl bg-[var(--bg)]/88 backdrop-blur-[3px]"
+                role="progressbar"
+                aria-valuetext="Extracting report"
+                aria-busy="true"
+              >
+                <div className="flex min-h-full flex-col items-center justify-center gap-4 px-4 py-8 sm:gap-5 sm:px-6">
+                  <Loader2 className="h-10 w-10 shrink-0 animate-spin text-[var(--accent)] sm:h-12 sm:w-12" aria-hidden />
+                  <div className="max-w-sm text-center space-y-2">
+                    <p className="text-sm font-semibold text-[var(--fg)]">Reading your PDF…</p>
+                    <p className="text-xs mv-muted leading-relaxed">
+                      UMA is sending your file to the AI to pull out labs, medications, and a summary. Scanned or long
+                      reports can take up to a minute — please keep this tab open.
+                    </p>
+                  </div>
+                  <div className="h-1.5 w-full max-w-xs shrink-0 rounded-full bg-[var(--border)] overflow-hidden">
+                    <div
+                      className="h-full w-2/5 rounded-full bg-[var(--accent)]"
+                      style={{ animation: "umaExtractBar 1.8s ease-in-out infinite" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}
+
+      <RecordNoticeToast message={recordNotice} onDismiss={dismissRecordNotice} />
     </div>
   );
 }

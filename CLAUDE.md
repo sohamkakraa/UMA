@@ -51,8 +51,8 @@ Chat design principles:
 - **Components**: Custom component library in `src/components/ui/` (Button, Card, Badge, Input)
 - **Charts**: Recharts (AreaChart for lab trends)
 - **Icons**: Lucide React
-- **PDF parsing**: `pdf-parse` (Node.js runtime)
-- **AI extraction**: OpenAI API via `openai` SDK — structured JSON extraction with strict JSON Schema
+- **PDF ingestion**: Anthropic Messages API with a `document` content block (base64 PDF); no local PDF text library for the LLM path
+- **AI extraction**: Anthropic API via `@anthropic-ai/sdk` — PDF `document` block with **citations enabled**, free-form reply: small **`uma-meta` JSON fence** (metadata + patient names) plus **`markdownArtifact`** body (no API JSON Schema — avoids Anthropic union-type limits)
 - **State / storage**: `localStorage` via `src/lib/store.ts` (`mv_patient_store_v1` key); no backend DB yet
 - **Runtime**: Next.js API routes (`/api/extract`, `/api/chat`) running on Node.js
 
@@ -71,8 +71,8 @@ src/
     profile/page.tsx      # User profile editor
     login/page.tsx        # Login screen
     api/
-      extract/route.ts    # POST — PDF → structured ExtractedDoc via LLM or regex fallback
-      chat/route.ts       # POST — question + store → answer (deterministic now, LLM later)
+      extract/route.ts    # POST — PDF → ExtractedDoc via Claude (PDF + citations + uma-meta JSON + markdown body; charts/labs not filled from JSON)
+      chat/route.ts       # POST — question + store → answer (Claude preferred; OpenAI optional fallback; parallel PDF records agent when ANTHROPIC_API_KEY is set)
       auth/
         login/route.ts
         logout/route.ts
@@ -117,9 +117,9 @@ PatientStore {
 ## Key Behaviours & Invariants
 
 - **Store merge logic** (`store.ts → mergeExtractedDoc`): new docs prepend; meds dedupe by lowercase name (latest wins); labs append and dedupe by `name|date|value|unit` key; allergies/conditions union-merge into profile.
-- **Lab normalisation** (`extract/route.ts → normalizeLabName`): canonical names like HbA1c, LDL, HDL, TSH, etc. are enforced so chart lookups work correctly.
-- **LLM extraction** (`extract/route.ts`): when `OPENAI_API_KEY` is set, PDFs are extracted via OpenAI structured output with a strict JSON Schema. Falls back to regex heuristics if LLM fails or key is missing.
-- **Chat route** (`api/chat/route.ts`): currently deterministic keyword-matching against the store. The architecture is ready to swap in an LLM call with the store as context — that is the next step.
+- **Lab normalisation** (`standardized.ts`): canonical names like HbA1c, LDL, HDL, TSH, etc. are enforced so chart lookups and markdown tables stay consistent.
+- **LLM extraction** (`extract/route.ts` → `medicalPdfPipeline.ts`): requires `ANTHROPIC_API_KEY`. PDFs use a base64 **`document`** block with **`citations: { enabled: true }`** and **`messages.create`**. The model returns `uma-meta` JSON + markdown; then **`parseMarkdownArtifact.ts`** fills `doc.labs`, `medications`, `allergies`, `conditions`, `sections`, `doctors`, `facilityName` from pipe tables and bullet sections. **`mergeExtractedDoc`** runs **`enrichDocFromMarkdown`** again after lexicon patches so client-side merges stay in sync. Run **`npm test`** (Vitest) for parser coverage.
+- **Chat route** (`api/chat/route.ts`): uses Claude when `ANTHROPIC_API_KEY` is set (store as system context), else OpenAI if `OPENAI_API_KEY` is set, else keyword fallback. Attaching a PDF in chat runs the same extraction pipeline in parallel when `ANTHROPIC_API_KEY` is set.
 - **Theme**: CSS custom properties (`--accent`, `--bg`, `--panel`, `--border`, `--fg`, `--muted`, etc.) are set by `ThemeInit` on the `<html>` element. Always use these variables, never hardcode colours.
 - **No server-side persistence yet**: everything is `localStorage`. Future work will add a backend with proper auth and hospital API connectors.
 
@@ -129,8 +129,11 @@ PatientStore {
 
 | Variable | Purpose |
 |---|---|
-| `OPENAI_API_KEY` | Enables LLM-powered PDF extraction. Without it, regex fallback is used. |
-| `OPENAI_MODEL` | OpenAI model to use for extraction (default: `gpt-5-nano`) |
+| `ANTHROPIC_API_KEY` | Required for PDF upload extraction and for chat when using Claude. |
+| `ANTHROPIC_MODEL` | Chat model (default: `claude-haiku-4-5-20251001`). |
+| `ANTHROPIC_PDF_MODEL` | PDF extraction model (default: `claude-sonnet-4-5-20250929`). |
+| `OPENAI_API_KEY` | Optional chat fallback if Anthropic is not configured. |
+| `OPENAI_CHAT_MODEL` | OpenAI chat model when using the fallback (default: `gpt-4o-mini`). |
 
 ---
 
