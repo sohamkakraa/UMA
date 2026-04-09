@@ -123,7 +123,8 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
             <div className="space-y-1">
               <h1 className="text-2xl font-semibold mv-title">Sign in to UMA</h1>
               <p className="text-sm mv-muted">
-                Use your email or mobile number. We will send a one-time code (prototype: see note below).
+                Enter your email or phone. This prototype does not send SMS or email; the code is stored on the server only.
+                After Send code, read the note below—your host may expose the code for Preview or demo sign-in.
               </p>
             </div>
           </CardHeader>

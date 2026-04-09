@@ -133,7 +133,7 @@ A common **free** combo: **[Vercel](https://vercel.com) (Hobby)** for the app + 
    | `ANTHROPIC_API_KEY` | For PDF extraction + Claude chat |
    | `ANTHROPIC_MODEL` | Optional (defaults in `.env.example`) |
    | `ANTHROPIC_PDF_MODEL` | Optional |
-   | `AUTH_DEV_RETURN_OTP` | Set to `1` **only** for internal demos where returning the OTP in JSON is acceptable—**never** for public betas unless you understand the risk |
+   | `AUTH_DEV_RETURN_OTP` | `1` = show OTP in the API/UI after Send code on **local dev** or **Vercel Preview** (`VERCEL_ENV=preview`). **Not** enabled on Vercel **Production** (use `AUTH_BETA_DEMO_*` for a fixed demo code there). No real email/SMS is sent until you add a provider. |
    | `AUTH_BETA_DEMO_EMAIL` | Optional: shared beta email (see “Shared beta (dummy) sign-in”) |
    | `AUTH_BETA_DEMO_OTP` | Optional: six digits; must be set with the demo email |
    | `AUTH_BETA_EXPOSE_DEMO_OTP` | Optional: `1` to show the demo OTP on screen after Send code (closed previews only) |

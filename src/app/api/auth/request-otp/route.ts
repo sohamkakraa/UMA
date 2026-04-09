@@ -49,8 +49,10 @@ export async function POST(req: Request) {
     );
   }
 
+  // Local dev: NODE_ENV=development. Vercel Preview: VERCEL_ENV=preview (NODE_ENV is still "production").
   const devReturn =
-    process.env.NODE_ENV !== "production" && process.env.AUTH_DEV_RETURN_OTP === "1";
+    process.env.AUTH_DEV_RETURN_OTP === "1" &&
+    (process.env.NODE_ENV !== "production" || process.env.VERCEL_ENV === "preview");
   const betaExpose = isBetaDemoIdentifier(norm) && shouldExposeBetaDemoOtp();
 
   return NextResponse.json({
@@ -59,6 +61,6 @@ export async function POST(req: Request) {
     ...(devReturn ? { devOtp: code } : {}),
     ...(betaExpose ? { betaDemoOtp: code } : {}),
     message:
-      "No SMS or email is sent in this prototype. For local testing, set AUTH_DEV_RETURN_OTP=1 to receive the code in this response; production would use your messaging provider.",
+      "This app does not send SMS or email yet—the code is only stored on the server. For local dev or a Vercel Preview deploy, set AUTH_DEV_RETURN_OTP=1 to show the code on this screen after Send code. For a shared test account, use AUTH_BETA_DEMO_* (see README). Real launches need a provider (e.g. Resend, SendGrid, Twilio).",
   });
 }
