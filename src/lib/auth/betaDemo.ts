@@ -6,7 +6,8 @@ export type BetaDemoConfig = { email: string; otp: string };
 /**
  * Shared beta / dummy sign-in: fixed email + 6-digit OTP stored like a normal challenge.
  * Set AUTH_BETA_DEMO_EMAIL + AUTH_BETA_DEMO_OTP on the server. Optional AUTH_BETA_EXPOSE_DEMO_OTP=1
- * returns the code in the request-otp JSON (same trade-off as AUTH_DEV_RETURN_OTP).
+ * returns the code in the request-otp JSON when email delivery is not configured (same trade-off as AUTH_DEV_RETURN_OTP).
+ * When RESEND_API_KEY + AUTH_EMAIL_FROM are set, codes are emailed only and not returned in the API.
  */
 export function getBetaDemoConfig(): BetaDemoConfig | null {
   const raw = process.env.AUTH_BETA_DEMO_EMAIL?.trim();

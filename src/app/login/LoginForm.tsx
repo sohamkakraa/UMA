@@ -7,13 +7,11 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Select";
 import {
   afterOtpSignIn,
   getStore,
   syncPatientStoreWithServer,
 } from "@/lib/store";
-import { buildPhoneDialOptions } from "@/lib/phoneDialOptions";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { UmaLogo } from "@/components/branding/UmaLogo";
 
@@ -38,12 +36,7 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
   const next = sp.get("next") ?? "/dashboard";
   const router = useRouter();
 
-  const dialOptions = buildPhoneDialOptions();
-
-  const [mode, setMode] = useState<"email" | "phone">("email");
   const [email, setEmail] = useState("");
-  const [phoneNational, setPhoneNational] = useState("");
-  const [phoneCountryCode, setPhoneCountryCode] = useState("+1");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"enter" | "otp">("enter");
   const [loading, setLoading] = useState(false);
@@ -56,7 +49,7 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
 
   const verifyLock = useRef(false);
 
-  const identifier = mode === "email" ? email.trim() : phoneNational.trim();
+  const identifier = email.trim();
 
   const completeSignIn = useCallback(
     async (sixDigitCode: string) => {
@@ -73,7 +66,6 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
           body: JSON.stringify({
             identifier,
             code: normalized,
-            ...(mode === "phone" ? { phoneCountryCode } : {}),
           }),
         });
         const j = (await r.json()) as { ok?: boolean; error?: string };
@@ -101,7 +93,7 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
         verifyLock.current = false;
       }
     },
-    [identifier, mode, phoneCountryCode, next],
+    [identifier, next],
   );
 
   useEffect(() => {
@@ -166,10 +158,7 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
       const r = await fetch("/api/auth/request-otp", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          identifier,
-          ...(mode === "phone" ? { phoneCountryCode } : {}),
-        }),
+        body: JSON.stringify({ identifier }),
       });
       const j = (await r.json()) as {
         ok?: boolean;
@@ -299,89 +288,26 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
                   <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-xs leading-relaxed text-[var(--fg)]">
                     <p className="font-medium text-[var(--fg)]">Beta testers</p>
                     <p className="mt-1 mv-muted">
-                      Use the{" "}
-                      <span className="text-[var(--fg)]">demo email</span> you
-                      were given, then request a code. Enter the{" "}
-                      <span className="text-[var(--fg)]">
-                        6-digit beta code
-                      </span>{" "}
-                      from your invite. If your host enabled on-screen hints,
-                      the code appears after you tap Send code.
+                      Use the <span className="text-[var(--fg)]">demo email</span>{" "}
+                      you were given, then tap Send code. Check your inbox for the
+                      6-digit code, or use the invite code if your host shows
+                      on-screen hints on Preview only.
                     </p>
                   </div>
                 )}
                 {step === "enter" ? (
                   <form onSubmit={requestOtp} className="space-y-4">
-                    <div className="flex gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-1">
-                      <button
-                        type="button"
-                        className={`flex-1 rounded-xl py-2 text-sm font-medium transition ${
-                          mode === "email"
-                            ? "bg-[var(--panel)] shadow-sm text-[var(--fg)]"
-                            : "mv-muted"
-                        }`}
-                        onClick={() => setMode("email")}
-                      >
-                        Email
-                      </button>
-                      <button
-                        type="button"
-                        className={`flex-1 rounded-xl py-2 text-sm font-medium transition ${
-                          mode === "phone"
-                            ? "bg-[var(--panel)] shadow-sm text-[var(--fg)]"
-                            : "mv-muted"
-                        }`}
-                        onClick={() => setMode("phone")}
-                      >
-                        Phone
-                      </button>
-                    </div>
-
-                    {mode === "email" ? (
-                      <label className="text-xs mv-muted block">
-                        Email
-                        <Input
-                          type="email"
-                          className="mt-1"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="you@example.com"
-                          autoComplete="email"
-                        />
-                      </label>
-                    ) : (
-                      <div className="space-y-2">
-                        <span className="text-xs mv-muted">Phone</span>
-                        <div className="flex rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] overflow-hidden focus-within:ring-2 focus-within:ring-[var(--accent)]/30">
-                          <Select
-                            className="shrink-0 w-[4.75rem] sm:w-[5.25rem] rounded-none border-0 border-r border-[var(--border)] bg-transparent py-2.5 pl-2 pr-1 text-sm text-[var(--fg)]"
-                            value={phoneCountryCode}
-                            onChange={(e) =>
-                              setPhoneCountryCode(e.target.value)
-                            }
-                            aria-label="Country calling code"
-                          >
-                            {dialOptions.map((o) => (
-                              <option
-                                key={o.value}
-                                value={o.value}
-                                title={o.countryName}
-                              >
-                                {o.label}
-                              </option>
-                            ))}
-                          </Select>
-                          <Input
-                            className="flex-1 min-w-0 rounded-none border-0 bg-transparent py-2.5 px-3 text-sm"
-                            inputMode="tel"
-                            value={phoneNational}
-                            onChange={(e) => setPhoneNational(e.target.value)}
-                            placeholder="National number"
-                            autoComplete="tel-national"
-                          />
-                        </div>
-                      </div>
-                    )}
+                    <label className="text-xs mv-muted block">
+                      Email
+                      <Input
+                        type="email"
+                        className="mt-1"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="you@example.com"
+                        autoComplete="email"
+                      />
+                    </label>
 
                     {info && (
                       <p className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-xs leading-relaxed mv-muted">
@@ -405,7 +331,7 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
                 ) : (
                   <form onSubmit={verifyOtp} className="space-y-4">
                     <p className="text-sm mv-muted">
-                      Enter the 6-digit code for{" "}
+                      Enter the 6-digit code we sent to{" "}
                       <span className="text-[var(--fg)]">{identifier}</span>.
                     </p>
                     {devOtpHint && (
