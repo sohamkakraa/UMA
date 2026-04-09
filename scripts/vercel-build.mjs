@@ -6,9 +6,12 @@
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { applyDirectUrlDefault } from "./prisma-env.mjs";
+import { applyDirectUrlDefault, loadProjectEnvForPrismaScripts } from "./prisma-env.mjs";
 import { prismaSpawn } from "./run-prisma-cli.mjs";
 import { nextSpawn } from "./run-next-build.mjs";
+
+// Allow DATABASE_URL only in .env on local/CI (not injected yet in process.env).
+loadProjectEnvForPrismaScripts();
 
 if (!process.env.DATABASE_URL?.trim()) {
   console.error(`
@@ -24,7 +27,7 @@ See README.md → "Deploy a beta on a free tier".
 }
 
 const directUrlBeforeDefault = Boolean(process.env.DIRECT_URL?.trim());
-applyDirectUrlDefault();
+applyDirectUrlDefault(); // fills DIRECT_URL when missing (re-loads env; idempotent)
 
 const db = process.env.DATABASE_URL.trim();
 const dir = process.env.DIRECT_URL?.trim() ?? "";
