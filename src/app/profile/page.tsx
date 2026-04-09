@@ -190,7 +190,9 @@ export default function ProfilePage() {
                     value={store.profile.sex ?? ""}
                     onChange={(e) => updateProfile({ sex: e.target.value || undefined })}
                   >
-                    <option value="">Select</option>
+                    <option value="" disabled>
+                      Select sex
+                    </option>
                     {sexOptions.map((s) => (
                       <option key={s} value={s}>
                         {s}
@@ -207,24 +209,27 @@ export default function ProfilePage() {
                   />
                 </label>
                 <div className="text-xs mv-muted">
-                  Phone
-                  <div className="mt-1 grid grid-cols-[110px_1fr] gap-2">
+                  Mobile number
+                  <div className="mt-1 flex rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] overflow-hidden focus-within:ring-2 focus-within:ring-[var(--accent)]/30">
                     <Select
-                      className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] py-2 text-sm text-[var(--fg)] min-w-0 truncate"
-                      value={store.profile.countryCode ?? "+1"}
+                      className="shrink-0 w-[4.75rem] sm:w-[5.25rem] rounded-none border-0 border-r border-[var(--border)] bg-transparent py-2.5 pl-2 pr-1 text-sm text-[var(--fg)]"
+                      value={store.profile.countryCode ?? ""}
                       onChange={(e) => updateProfile({ countryCode: e.target.value })}
                       aria-label="Country calling code"
                     >
+                      <option value="">Code</option>
                       {dialOptions.map((c) => (
-                        <option key={c.value} value={c.value}>
+                        <option key={c.value} value={c.value} title={c.countryName}>
                           {c.label}
                         </option>
                       ))}
                     </Select>
                     <Input
+                      className="flex-1 min-w-0 rounded-none border-0 bg-transparent py-2.5 px-3 text-sm"
                       value={store.profile.phone ?? ""}
                       onChange={(e) => updateProfile({ phone: e.target.value })}
-                      placeholder="Phone number"
+                      placeholder="National number"
+                      autoComplete="tel-national"
                     />
                   </div>
                 </div>

@@ -177,20 +177,21 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
                 ) : (
                   <div className="space-y-2">
                     <span className="text-xs mv-muted">Phone</span>
-                    <div className="grid grid-cols-[minmax(0,130px)_1fr] gap-2">
+                    <div className="flex rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] overflow-hidden focus-within:ring-2 focus-within:ring-[var(--accent)]/30">
                       <Select
-                        className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] py-2 text-sm text-[var(--fg)] min-w-0 truncate"
+                        className="shrink-0 w-[4.75rem] sm:w-[5.25rem] rounded-none border-0 border-r border-[var(--border)] bg-transparent py-2.5 pl-2 pr-1 text-sm text-[var(--fg)]"
                         value={phoneCountryCode}
                         onChange={(e) => setPhoneCountryCode(e.target.value)}
                         aria-label="Country calling code"
                       >
                         {dialOptions.map((o) => (
-                          <option key={o.value} value={o.value}>
+                          <option key={o.value} value={o.value} title={o.countryName}>
                             {o.label}
                           </option>
                         ))}
                       </Select>
                       <Input
+                        className="flex-1 min-w-0 rounded-none border-0 bg-transparent py-2.5 px-3 text-sm"
                         inputMode="tel"
                         value={phoneNational}
                         onChange={(e) => setPhoneNational(e.target.value)}

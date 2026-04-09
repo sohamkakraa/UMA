@@ -26,7 +26,7 @@ export default function OnboardingPage() {
   const [sex, setSex] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [countryCode, setCountryCode] = useState("+1");
+  const [countryCode, setCountryCode] = useState("");
 
   useEffect(() => {
     const s = getStore();
@@ -42,7 +42,7 @@ export default function OnboardingPage() {
     setSex(s.profile.sex ?? "");
     setEmail(s.profile.email ?? "");
     setPhone(s.profile.phone ?? "");
-    setCountryCode(s.profile.countryCode ?? "+1");
+    setCountryCode(s.profile.countryCode ?? "");
   }, [router]);
 
   function persist(next: ReturnType<typeof getStore>) {
@@ -58,14 +58,22 @@ export default function OnboardingPage() {
       setErr("Please add your name and date of birth.");
       return;
     }
+    if (!sex.trim()) {
+      setErr("Please select sex.");
+      return;
+    }
     const em = email.trim().toLowerCase();
     const digits = phone.replace(/\D/g, "");
     if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
       setErr("Please enter a valid email.");
       return;
     }
+    if (!countryCode.trim()) {
+      setErr("Choose your country calling code, then enter your mobile number.");
+      return;
+    }
     if (digits.length < 6) {
-      setErr("Please enter a valid phone number with country code.");
+      setErr("Please enter a valid mobile number (digits only, no country code in this box).");
       return;
     }
 
@@ -191,11 +199,14 @@ export default function OnboardingPage() {
                   <label className="text-xs mv-muted">
                     Sex
                     <Select
+                      required
                       className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] py-2 text-sm text-[var(--fg)]"
                       value={sex}
                       onChange={(e) => setSex(e.target.value)}
                     >
-                      <option value="">Select</option>
+                      <option value="" disabled>
+                        Select sex
+                      </option>
                       {sexOptions.map((x) => (
                         <option key={x} value={x}>
                           {x}
@@ -214,26 +225,35 @@ export default function OnboardingPage() {
                     />
                   </label>
                   <div className="text-xs mv-muted sm:col-span-2">
-                    Phone
-                    <div className="mt-1 grid grid-cols-[minmax(0,130px)_1fr] gap-2">
+                    Mobile number
+                    <p className="text-[11px] mv-muted mt-0.5 font-normal">
+                      Pick your country code first, then type your number without the leading zero.
+                    </p>
+                    <div className="mt-1 flex rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] overflow-hidden focus-within:ring-2 focus-within:ring-[var(--accent)]/30">
                       <Select
-                        className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] py-2 text-sm text-[var(--fg)] min-w-0 truncate"
+                        className="shrink-0 w-[4.75rem] sm:w-[5.25rem] rounded-none border-0 border-r border-[var(--border)] bg-transparent py-2.5 pl-2 pr-1 text-sm text-[var(--fg)]"
                         value={countryCode}
                         onChange={(e) => setCountryCode(e.target.value)}
                         aria-label="Country calling code"
+                        required
                       >
+                        <option value="" disabled>
+                          Code
+                        </option>
                         {dialOptions.map((o) => (
-                          <option key={o.value} value={o.value}>
+                          <option key={o.value} value={o.value} title={o.countryName}>
                             {o.label}
                           </option>
                         ))}
                       </Select>
                       <Input
+                        className="flex-1 min-w-0 rounded-none border-0 bg-transparent py-2.5 px-3 text-sm"
                         inputMode="tel"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
-                        placeholder="National number"
+                        placeholder="e.g. 6 12345678"
                         autoComplete="tel-national"
+                        aria-label="National mobile number"
                       />
                     </div>
                   </div>

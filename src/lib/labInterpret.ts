@@ -204,6 +204,14 @@ const REF_BY_CANONICAL: Record<string, RefRow> = {
 const DISCLAIMER =
   "Typical ranges are for learning only. Your lab’s reference interval and your clinician’s judgment matter.";
 
+/** Remove markdown emphasis markers from model-sourced lab names (e.g. **Glucose**). */
+export function stripLabDisplayMarkdown(s: string): string {
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/\*\*/g, "");
+}
+
 /** Pull first plausible number from a result string (e.g. ">240", "5.2", "Negative" → null). */
 export function parseLabNumeric(valueRaw: string): number | null {
   const s = valueRaw.replace(/,/g, ".").trim();
@@ -294,9 +302,10 @@ export function interpretLab(lab: ExtractedLab, extensions?: StandardLexiconEntr
     ref?.meaning ??
     "This is a lab result from your records. Ask your care team what it means for you.";
 
+  const rawName = lab.name.trim() || canonical;
   return {
     canonicalName: canonical,
-    displayName: lab.name.trim() || canonical,
+    displayName: stripLabDisplayMarkdown(rawName),
     displayUnit,
     displayValue,
     numericValue: numeric,
