@@ -7,22 +7,22 @@ UMA (Ur Medical Assistant) helps people upload medical PDFs, see trends, and cha
 - **PostgreSQL + Prisma**: `User`, `OtpChallenge`, `PatientRecord` (JSON blob per user).
 - **Sign-in**: One-time codes stored in the database; signed session cookie (`AUTH_SECRET`) with user id.
 - **Patient data**: `GET` / `PUT` `/api/patient-store` syncs the structured store for signed-in users (PDF base64 is omitted in the payload to keep rows small).
-- **Still prototype**: SMS/email OTP delivery is not wired—you use `AUTH_DEV_RETURN_OTP=1` locally, configure a **shared beta demo** (below), or add a provider for real betas.
+- **Sign-in email**: When **`RESEND_API_KEY`** and **`AUTH_EMAIL_FROM`** are set, OTPs are sent by [Resend](https://resend.com) and are **not** returned in API responses. **Phone/SMS sign-in is disabled** for now. Without Resend, use **`AUTH_DEV_RETURN_OTP=1`** on local or **Preview** only, or a **shared beta demo** (below).
 
 ### Shared beta (dummy) sign-in
 
-For **invited testers** on a hosted build, you can enable one shared email account without SMS or email delivery:
+For **invited testers** on a hosted build, you can enable one shared email account without Resend (fixed OTP known out of band):
 
 1. Set **`AUTH_BETA_DEMO_EMAIL`** to a dedicated address (for example `demo-beta@yourdomain.com`).
 2. Set **`AUTH_BETA_DEMO_OTP`** to any **six digits**. Share the email and code with testers over a **private** channel (Slack, email invite, etc.).
-3. Testers choose **Email** on the sign-in page, enter that address, tap **Send code**, then enter the 6-digit code.
-4. Optional **`AUTH_BETA_EXPOSE_DEMO_OTP=1`**: after **Send code**, the UI (and JSON response) includes the OTP so testers do not need the invite text. Same trade-off as `AUTH_DEV_RETURN_OTP`—use only on **non-public** preview URLs, not a production site open to the internet.
+3. Testers enter that address on the sign-in page, tap **Send code**, then enter the 6-digit code.
+4. Optional **`AUTH_BETA_EXPOSE_DEMO_OTP=1`**: after **Send code**, the UI (and JSON response) includes the OTP **only when Resend is not configured**—use only on **non-public** preview URLs.
 
 Everyone using that email shares a single **User** and **PatientRecord** in the database. Rotate the OTP or remove these variables when the beta ends.
 
 ## What is not “enterprise complete”
 
-- No real OTP SMS/email provider (add Twilio, etc., when you are ready).
+- No SMS OTP (Twilio, etc.) yet. Email uses Resend when env vars are set.
 - No separate blob store for raw PDFs (they stay on the device unless you extend the API).
 ## Tech stack
 
@@ -60,7 +60,7 @@ npm run db:push
 cp .env.example .env.local
 ```
 
-Fill at least: `DATABASE_URL`, `DIRECT_URL` (match `DATABASE_URL` unless you use Neon pooled + direct), `AUTH_SECRET` (16+ random characters), and `ANTHROPIC_API_KEY` if you use AI features. For local OTP testing: `AUTH_DEV_RETURN_OTP=1`.
+Fill at least: `DATABASE_URL`, `DIRECT_URL` (match `DATABASE_URL` unless you use Neon pooled + direct), `AUTH_SECRET` (16+ random characters), and `ANTHROPIC_API_KEY` if you use AI features. For sign-in: set `RESEND_API_KEY` + `AUTH_EMAIL_FROM`, or use `AUTH_DEV_RETURN_OTP=1` for local/Preview without email.
 
 #### Pull env vars from Vercel (optional)
 
@@ -130,10 +130,12 @@ A common **free** combo: **[Vercel](https://vercel.com) (Hobby)** for the app + 
    | `DATABASE_URL` | Postgres connection string (Neon: pooled / serverless URI) |
    | `DIRECT_URL` | Same as `DATABASE_URL` if you have one URI; Neon: **direct** URI for migrations |
    | `AUTH_SECRET` | Long random string (32+ chars) |
+   | `RESEND_API_KEY` | [Resend](https://resend.com) API key; send real OTP emails in Production |
+   | `AUTH_EMAIL_FROM` | Sender, e.g. `UMA <noreply@yourdomain.com>` (domain verified in Resend) |
    | `ANTHROPIC_API_KEY` | For PDF extraction + Claude chat |
    | `ANTHROPIC_MODEL` | Optional (defaults in `.env.example`) |
    | `ANTHROPIC_PDF_MODEL` | Optional |
-   | `AUTH_DEV_RETURN_OTP` | `1` = show OTP in the API/UI after Send code on **local dev** or **Vercel Preview** (`VERCEL_ENV=preview`). **Not** enabled on Vercel **Production** (use `AUTH_BETA_DEMO_*` for a fixed demo code there). No real email/SMS is sent until you add a provider. |
+   | `AUTH_DEV_RETURN_OTP` | `1` = show OTP in the API/UI on **local dev** or **Vercel Preview** only. Ignored for that purpose when Resend sends mail. **Not** used on Vercel **Production**. |
    | `AUTH_BETA_DEMO_EMAIL` | Optional: shared beta email (see “Shared beta (dummy) sign-in”) |
    | `AUTH_BETA_DEMO_OTP` | Optional: six digits; must be set with the demo email |
    | `AUTH_BETA_EXPOSE_DEMO_OTP` | Optional: `1` to show the demo OTP on screen after Send code (closed previews only) |

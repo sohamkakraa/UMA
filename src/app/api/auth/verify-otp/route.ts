@@ -22,7 +22,17 @@ export async function POST(req: Request) {
   const { identifier, code, phoneCountryCode } = parsed.data;
   const norm = normalizeLoginIdentifier(identifier, phoneCountryCode);
   if (!norm) {
-    return NextResponse.json({ ok: false, error: "Invalid email or phone." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Invalid email address." }, { status: 400 });
+  }
+
+  if (norm.kind === "phone") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Sign-in with phone is not available yet. Please use your email address.",
+      },
+      { status: 400 },
+    );
   }
 
   let otpOk = false;
@@ -39,7 +49,7 @@ export async function POST(req: Request) {
       {
         ok: false,
         error:
-          "Incorrect or expired code. SMS/email is not sent unless demo mode is on—use the code shown after Send code, or tap Send code again.",
+          "Incorrect or expired code. Check the latest email we sent, or tap Send code to get a new one.",
       },
       { status: 401 },
     );
@@ -47,15 +57,9 @@ export async function POST(req: Request) {
 
   let user: { id: string; email: string | null; phoneE164: string | null };
   try {
-    if (norm.kind === "email") {
-      let u = await prisma.user.findUnique({ where: { email: norm.display } });
-      if (!u) u = await prisma.user.create({ data: { email: norm.display } });
-      user = u;
-    } else {
-      let u = await prisma.user.findUnique({ where: { phoneE164: norm.e164 } });
-      if (!u) u = await prisma.user.create({ data: { phoneE164: norm.e164 } });
-      user = u;
-    }
+    let u = await prisma.user.findUnique({ where: { email: norm.display } });
+    if (!u) u = await prisma.user.create({ data: { email: norm.display } });
+    user = u;
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
       return NextResponse.json(

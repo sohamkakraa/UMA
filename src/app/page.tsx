@@ -78,8 +78,8 @@ export default function HomePage() {
                 },
                 {
                   icon: Shield,
-                  title: "Sign in with email or phone",
-                  body: "One-time codes (OTP) link your email and phone so you can return with either.",
+                  title: "Sign in with email",
+                  body: "One-time codes arrive by email so you can sign in securely. Phone sign-in is coming later.",
                 },
                 {
                   icon: Users,
@@ -176,7 +176,7 @@ export default function HomePage() {
           <div className="mx-auto max-w-6xl px-4 text-center">
             <h2 className="text-2xl font-semibold mv-title">Ready when you are</h2>
             <p className="mt-3 text-sm mv-muted max-w-lg mx-auto leading-relaxed">
-              Sign in with your email or phone, confirm a one-time code, and walk through a short setup—optional steps
+              Sign in with your email, confirm a one-time code we send you, and walk through a short setup—optional steps
               included.
             </p>
             <Link href="/login" className="mt-8 inline-block">
