@@ -35,7 +35,14 @@ export async function POST(req: Request) {
     );
   }
   if (!otpOk) {
-    return NextResponse.json({ ok: false, error: "Incorrect or expired code." }, { status: 401 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Incorrect or expired code. SMS/email is not sent unless demo mode is on—use the code shown after Send code, or tap Send code again.",
+      },
+      { status: 401 },
+    );
   }
 
   let user: { id: string; email: string | null; phoneE164: string | null };

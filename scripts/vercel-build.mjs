@@ -3,6 +3,8 @@
  * Vercel build: prisma migrate → prisma generate → next build.
  * Exit 1 = one of those steps failed; scroll up in the Vercel log for Prisma/Next output
  * immediately above the matching "[vercel-build] ── … ──" banner.
+ *
+ * Use stdout (console.log) for routine messages so Vercel does not mark the build as having "errors".
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -10,7 +12,6 @@ import { applyDirectUrlDefault, loadProjectEnvForPrismaScripts } from "./prisma-
 import { prismaSpawn } from "./run-prisma-cli.mjs";
 import { nextSpawn } from "./run-next-build.mjs";
 
-// Allow DATABASE_URL only in .env on local/CI (not injected yet in process.env).
 loadProjectEnvForPrismaScripts();
 
 if (!process.env.DATABASE_URL?.trim()) {
@@ -27,27 +28,27 @@ See README.md → "Deploy a beta on a free tier".
 }
 
 const directUrlBeforeDefault = Boolean(process.env.DIRECT_URL?.trim());
-applyDirectUrlDefault(); // fills DIRECT_URL when missing (re-loads env; idempotent)
+applyDirectUrlDefault();
 
 const db = process.env.DATABASE_URL.trim();
 const dir = process.env.DIRECT_URL?.trim() ?? "";
 
-console.error("\n[vercel-build] Diagnostic (no secret values logged):");
-console.error(`  cwd: ${process.cwd()}`);
-console.error(`  node: ${process.version}`);
-console.error(`  VERCEL_ENV: ${process.env.VERCEL_ENV ?? "(unset)"}`);
-console.error(`  DATABASE_URL length: ${db.length}`);
-console.error(
+console.log("\n[vercel-build] Diagnostic (no secret values logged):");
+console.log(`  cwd: ${process.cwd()}`);
+console.log(`  node: ${process.version}`);
+console.log(`  VERCEL_ENV: ${process.env.VERCEL_ENV ?? "(unset)"}`);
+console.log(`  DATABASE_URL length: ${db.length}`);
+console.log(
   `  DIRECT_URL: ${dir ? `set, length ${dir.length}` : "unset"}${!directUrlBeforeDefault && dir ? " (copied from DATABASE_URL)" : ""}`,
 );
 
 const prismaMain = path.join(process.cwd(), "node_modules", "prisma", "build", "index.js");
 const nextMain = path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
-console.error(`  prisma CLI file exists: ${existsSync(prismaMain)}`);
-console.error(`  next CLI file exists: ${existsSync(nextMain)}`);
-console.error(
+console.log(`  prisma CLI file exists: ${existsSync(prismaMain)}`);
+console.log(`  next CLI file exists: ${existsSync(nextMain)}`);
+console.log(
   "\n[vercel-build] Steps run in order. On failure, find the LAST \"──\" banner below,\n" +
-    "then read the error lines immediately ABOVE it (Prisma P#### or Next/TypeScript).\n",
+    "then read the output immediately ABOVE it (Prisma P#### or Next/TypeScript).\n",
 );
 
 function fail(label, code) {
@@ -73,13 +74,13 @@ function fail(label, code) {
 }
 
 function run(label, code) {
-  console.error(`\n[vercel-build] ── ${label} ──\n`);
+  console.log(`\n[vercel-build] ── ${label} ──\n`);
   if (code !== 0) fail(label, code);
-  console.error(`[vercel-build] OK: ${label}\n`);
+  console.log(`[vercel-build] OK: ${label}\n`);
 }
 
 run("prisma migrate deploy", prismaSpawn(["migrate", "deploy"]));
 run("prisma generate", prismaSpawn(["generate"]));
 run("next build", nextSpawn(["build"]));
 
-console.error("[vercel-build] All steps finished successfully.\n");
+console.log("[vercel-build] All steps finished successfully.\n");
