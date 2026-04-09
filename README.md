@@ -97,7 +97,8 @@ A common **free** combo: **[Vercel](https://vercel.com) (Hobby)** for the app + 
 
 1. Sign up at [vercel.com](https://vercel.com) (free Hobby tier).
 2. **Add New Project** → import the GitHub repo.
-3. **Environment variables** (Production + Preview):
+3. **Before the first deploy**, open **Settings → Environment Variables** and add **`DATABASE_URL`** (and the other vars below). If `DATABASE_URL` is missing, the build fails with Prisma **P1012** because `prisma migrate deploy` and `prisma generate` read `prisma/schema.prisma` during the build.
+4. **Environment variables** (Production + Preview):
 
    | Name | Notes |
    |------|--------|
@@ -108,9 +109,9 @@ A common **free** combo: **[Vercel](https://vercel.com) (Hobby)** for the app + 
    | `ANTHROPIC_PDF_MODEL` | Optional |
    | `AUTH_DEV_RETURN_OTP` | Set to `1` **only** for internal demos where returning the OTP in JSON is acceptable—**never** for public betas unless you understand the risk |
 
-4. Deploy. This repo’s `vercel.json` runs **`npm install`**, then **`prisma migrate deploy`** and **`prisma generate`** during the build so Prisma is installed and tables exist before `next build`.
+5. Deploy. This repo’s `vercel.json` runs **`npm install`**, then a **`DATABASE_URL` check**, **`prisma migrate deploy`**, **`prisma generate`**, and **`next build`** so tables exist before the app is built.
 
-5. **Preview deployments**: push a branch or open a PR—Vercel shows a unique preview URL in the dashboard and on the PR. Use that to share a “temp” beta link.
+6. **Preview deployments**: push a branch or open a PR—Vercel shows a unique preview URL in the dashboard and on the PR. Use that to share a “temp” beta link.
 
 ### D) After deploy
 
