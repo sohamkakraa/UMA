@@ -386,24 +386,51 @@ function hashStr(s: string): number {
 // Main component
 // ---------------------------------------------------------------------------
 
+function syncThemeFromDocument(): "light" | "dark" {
+  const t = document.documentElement.dataset.theme;
+  if (t === "light" || t === "dark") return t;
+  return getStore().preferences?.theme ?? "dark";
+}
+
 export default function BodyPage() {
   const [scrollY, setScrollY] = useState(0);
   const [windowHeight, setWindowHeight] = useState(800);
   const [store, setStore] = useState(() => getHydrationSafeStore());
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    typeof window === "undefined" ? "dark" : (getStore().preferences?.theme ?? "dark")
+  );
 
   useEffect(() => {
-    setStore(getStore());
-    setWindowHeight(window.innerHeight);
+    queueMicrotask(() => {
+      setStore(getStore());
+      setTheme(getStore().preferences?.theme ?? syncThemeFromDocument());
+      setWindowHeight(window.innerHeight);
+    });
     const handleScroll = () => setScrollY(window.scrollY);
     const handleResize = () => setWindowHeight(window.innerHeight);
 
+    const syncTheme = () => setTheme(getStore().preferences?.theme ?? syncThemeFromDocument());
+    const onStoreUpdate = () => syncTheme();
+
     window.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", handleResize, { passive: true });
+    window.addEventListener("storage", syncTheme);
+    window.addEventListener("focus", syncTheme);
+    window.addEventListener("mv-store-update", onStoreUpdate);
+    const mo = new MutationObserver(syncTheme);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
     return () => {
       window.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("storage", syncTheme);
+      window.removeEventListener("focus", syncTheme);
+      window.removeEventListener("mv-store-update", onStoreUpdate);
+      mo.disconnect();
     };
   }, []);
+
+  const isLight = theme === "light";
 
   const activeIndex = useMemo(() => {
     const raw = Math.floor((scrollY + windowHeight * 0.4) / windowHeight);
@@ -486,7 +513,13 @@ export default function BodyPage() {
         html, body { margin: 0; padding: 0; }
       `}</style>
 
-      <div style={{ background: "#030d14", minHeight: "100vh" }}>
+      <div
+        style={{
+          background: isLight ? "var(--bg)" : "#030d14",
+          minHeight: "100vh",
+          color: isLight ? "var(--fg)" : undefined,
+        }}
+      >
         <AppTopNav
           fixed
           rightSlot={
@@ -513,8 +546,10 @@ export default function BodyPage() {
                       borderRadius: 3,
                       background:
                         i === activeIndex
-                          ? section.color
-                          : "rgba(255,255,255,0.2)",
+                          ? s.color
+                          : isLight
+                            ? "rgba(15,21,24,0.18)"
+                            : "rgba(255,255,255,0.2)",
                       transition: "all 0.4s ease",
                     }}
                   />
@@ -565,7 +600,7 @@ export default function BodyPage() {
                   margin: "4px 0 0",
                   fontSize: 22,
                   fontWeight: 600,
-                  color: "#ffffff",
+                  color: isLight ? "var(--fg)" : "#ffffff",
                   letterSpacing: "-0.01em",
                   transition: "color 0.5s ease",
                 }}
@@ -575,21 +610,13 @@ export default function BodyPage() {
             </div>
 
             {/* SVG Body */}
-            <BodySVG
-              section={section}
-              isFemale={isFemale}
-              activeIndex={activeIndex}
-            />
+            <BodySVG section={section} isFemale={isFemale} isLight={isLight} />
 
             {/* Annotation card or intro card */}
             {section.id === "intro" ? (
-              <IntroCard section={section} />
+              <IntroCard section={section} isLight={isLight} />
             ) : (
-              <AnnotationCard
-                key={section.id}
-                section={section}
-                labs={sectionLabs}
-              />
+              <AnnotationCard key={section.id} section={section} labs={sectionLabs} isLight={isLight} />
             )}
 
             {/* Scroll hint on intro */}
@@ -614,12 +641,12 @@ export default function BodyPage() {
                     fontSize: 11,
                     letterSpacing: "0.1em",
                     textTransform: "uppercase",
-                    color: "#00e5ff",
+                    color: section.color,
                   }}
                 >
                   Scroll to explore
                 </span>
-                <ChevronDown size={16} color="#00e5ff" />
+                <ChevronDown size={16} color={section.color} />
               </div>
             )}
           </div>
@@ -636,11 +663,11 @@ export default function BodyPage() {
 interface BodySVGProps {
   section: Section;
   isFemale: boolean;
-  activeIndex: number;
+  isLight: boolean;
 }
 
-function BodySVG({ section, isFemale }: BodySVGProps) {
-  const bodyStroke = "rgba(212, 232, 255, 0.24)";
+function BodySVG({ section, isFemale, isLight }: BodySVGProps) {
+  const bodyStroke = isLight ? "rgba(45, 70, 95, 0.22)" : "rgba(212, 232, 255, 0.24)";
 
   const onOrganClick = (organ: OrganKey) => {
     const id = ORGAN_TO_SECTION[organ];
@@ -673,12 +700,30 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
       >
         <defs>
           <linearGradient id="bodyTone" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#173246" stopOpacity="0.92" />
-            <stop offset="100%" stopColor="#0a1824" stopOpacity="0.96" />
+            {isLight ? (
+              <>
+                <stop offset="0%" stopColor="#c9dae8" stopOpacity="0.98" />
+                <stop offset="100%" stopColor="#9fb6ce" stopOpacity="0.95" />
+              </>
+            ) : (
+              <>
+                <stop offset="0%" stopColor="#173246" stopOpacity="0.92" />
+                <stop offset="100%" stopColor="#0a1824" stopOpacity="0.96" />
+              </>
+            )}
           </linearGradient>
           <radialGradient id="coreGlow" cx="50%" cy="35%" r="60%">
-            <stop offset="0%" stopColor="rgba(154,198,238,0.28)" />
-            <stop offset="100%" stopColor="rgba(7,22,35,0)" />
+            {isLight ? (
+              <>
+                <stop offset="0%" stopColor="rgba(80,130,180,0.2)" />
+                <stop offset="100%" stopColor="rgba(200,210,220,0)" />
+              </>
+            ) : (
+              <>
+                <stop offset="0%" stopColor="rgba(154,198,238,0.28)" />
+                <stop offset="100%" stopColor="rgba(7,22,35,0)" />
+              </>
+            )}
           </radialGradient>
           {/* Glow filter for active organs */}
           <filter id="organGlow" x="-50%" y="-50%" width="200%" height="200%">
@@ -731,11 +776,7 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
             section.id === "blood" ||
             vein.activeSections.includes(section.id);
           return (
-            <VeinPath
-              key={vein.key}
-              vein={vein}
-              isActive={isActive}
-            />
+            <VeinPath key={vein.key} vein={vein} isActive={isActive} isLight={isLight} />
           );
         })}
 
@@ -749,6 +790,7 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
               isActive={isActive}
               color={section.color}
               onSelect={onOrganClick}
+              isLight={isLight}
             />
           );
         })}
@@ -764,13 +806,18 @@ function BodySVG({ section, isFemale }: BodySVGProps) {
 interface VeinPathProps {
   vein: VeinDef;
   isActive: boolean;
+  isLight: boolean;
 }
 
-function VeinPath({ vein, isActive }: VeinPathProps) {
+function VeinPath({ vein, isActive, isLight }: VeinPathProps) {
   const slowDuration = isActive ? 2.2 : 5;
   const baseColor = vein.type === "artery" ? "#ef5c71" : "#8bc3ff";
-  const strokeColor = isActive ? baseColor : "rgba(77,110,140,0.45)";
-  const strokeOpacity = isActive ? 0.9 : 0.6;
+  const strokeColor = isActive
+    ? baseColor
+    : isLight
+      ? "rgba(55, 88, 118, 0.42)"
+      : "rgba(77,110,140,0.45)";
+  const strokeOpacity = isActive ? 0.9 : isLight ? 0.55 : 0.6;
 
   // Deterministic animation offset based on vein key
   const offset = (hashStr(vein.key) % 40) / 10;
@@ -826,11 +873,12 @@ interface OrganDotProps {
   isActive: boolean;
   color: string;
   onSelect: (key: OrganKey) => void;
+  isLight: boolean;
 }
 
-function OrganDot({ organ, isActive, color, onSelect }: OrganDotProps) {
+function OrganDot({ organ, isActive, color, onSelect, isLight }: OrganDotProps) {
   const r = isActive ? organ.r + 2 : organ.r;
-  const fill = isActive ? color : "#2d4158";
+  const fill = isActive ? color : isLight ? "#6a849e" : "#2d4158";
   const labelY = organ.cy - r - 9;
 
   // Deterministic delay for pulse variation
@@ -938,9 +986,10 @@ function OrganDot({ organ, isActive, color, onSelect }: OrganDotProps) {
 interface AnnotationCardProps {
   section: Section;
   labs: ExtractedLab[];
+  isLight: boolean;
 }
 
-function AnnotationCard({ section, labs }: AnnotationCardProps) {
+function AnnotationCard({ section, labs, isLight }: AnnotationCardProps) {
   const isLeft = section.side === "left";
 
   const cardStyle: React.CSSProperties = {
@@ -949,11 +998,12 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
     [isLeft ? "left" : "right"]: "2%",
     transform: "translateY(-50%)",
     width: "min(280px, 28%)",
-    background: "rgba(3,18,30,0.92)",
+    background: isLight ? "rgba(255,255,255,0.94)" : "rgba(3,18,30,0.92)",
     border: `1px solid ${section.color}40`,
     borderLeft: isLeft ? `3px solid ${section.color}` : `1px solid ${section.color}40`,
     borderRight: isLeft ? `1px solid ${section.color}40` : `3px solid ${section.color}`,
     borderRadius: 16,
+    boxShadow: isLight ? "var(--shadow)" : undefined,
     backdropFilter: "blur(16px)",
     WebkitBackdropFilter: "blur(16px)",
     padding: "20px 18px",
@@ -985,7 +1035,7 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
           margin: "0 0 10px",
           fontSize: 17,
           fontWeight: 600,
-          color: "#ffffff",
+          color: isLight ? "var(--fg)" : "#ffffff",
           lineHeight: 1.3,
           letterSpacing: "-0.01em",
         }}
@@ -996,7 +1046,7 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
         style={{
           margin: "0 0 16px",
           fontSize: 13,
-          color: "rgba(255,255,255,0.65)",
+          color: isLight ? "var(--muted)" : "rgba(255,255,255,0.65)",
           lineHeight: 1.6,
         }}
       >
@@ -1006,7 +1056,7 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
       {/* Lab values */}
       <div
         style={{
-          borderTop: `1px solid ${section.color}20`,
+          borderTop: `1px solid ${isLight ? `${section.color}35` : `${section.color}20`}`,
           paddingTop: 14,
         }}
       >
@@ -1027,10 +1077,11 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
           <p
             style={{
               fontSize: 12,
-              color: "rgba(255,255,255,0.35)",
+              color: isLight ? "var(--muted)" : "rgba(255,255,255,0.35)",
               fontStyle: "italic",
               lineHeight: 1.5,
               margin: 0,
+              opacity: isLight ? 0.9 : 1,
             }}
           >
             Upload a lab report to see your values here.
@@ -1050,7 +1101,7 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
                 <span
                   style={{
                     fontSize: 12,
-                    color: "rgba(255,255,255,0.7)",
+                    color: isLight ? "var(--muted)" : "rgba(255,255,255,0.7)",
                     flex: "1 1 auto",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -1063,7 +1114,7 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
                   style={{
                     fontSize: 13,
                     fontWeight: 600,
-                    color: "#ffffff",
+                    color: isLight ? "var(--fg)" : "#ffffff",
                     fontVariantNumeric: "tabular-nums",
                     flexShrink: 0,
                     letterSpacing: "0.02em",
@@ -1091,8 +1142,9 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
                 style={{
                   margin: "4px 0 0",
                   fontSize: 10,
-                  color: "rgba(255,255,255,0.3)",
+                  color: isLight ? "var(--muted)" : "rgba(255,255,255,0.3)",
                   textAlign: "right",
+                  opacity: isLight ? 0.85 : 1,
                 }}
               >
                 Latest: {labs[0].date}
@@ -1107,10 +1159,11 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
         style={{
           margin: "14px 0 0",
           fontSize: 9,
-          color: "rgba(255,255,255,0.25)",
+          color: isLight ? "var(--muted)" : "rgba(255,255,255,0.25)",
           lineHeight: 1.5,
           textAlign: "center",
           letterSpacing: "0.03em",
+          opacity: isLight ? 0.85 : 1,
         }}
       >
         Not medical advice — speak to your doctor about your results.
@@ -1125,9 +1178,10 @@ function AnnotationCard({ section, labs }: AnnotationCardProps) {
 
 interface IntroCardProps {
   section: Section;
+  isLight: boolean;
 }
 
-function IntroCard({ section }: IntroCardProps) {
+function IntroCard({ section, isLight }: IntroCardProps) {
   return (
     <div
       style={{
@@ -1136,9 +1190,12 @@ function IntroCard({ section }: IntroCardProps) {
         left: "50%",
         transform: "translateX(-50%)",
         width: "min(480px, 88%)",
-        background: "rgba(3,18,30,0.88)",
-        border: "1px solid rgba(0,229,255,0.18)",
+        background: isLight ? "rgba(255,255,255,0.94)" : "rgba(3,18,30,0.88)",
+        border: isLight
+          ? `1px solid ${section.color}45`
+          : "1px solid rgba(0,229,255,0.18)",
         borderRadius: 20,
+        boxShadow: isLight ? "var(--shadow)" : undefined,
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
         padding: "24px 28px",
@@ -1164,7 +1221,7 @@ function IntroCard({ section }: IntroCardProps) {
           margin: "0 0 12px",
           fontSize: 20,
           fontWeight: 600,
-          color: "#ffffff",
+          color: isLight ? "var(--fg)" : "#ffffff",
           letterSpacing: "-0.01em",
         }}
       >
@@ -1174,7 +1231,7 @@ function IntroCard({ section }: IntroCardProps) {
         style={{
           margin: 0,
           fontSize: 14,
-          color: "rgba(255,255,255,0.6)",
+          color: isLight ? "var(--muted)" : "rgba(255,255,255,0.6)",
           lineHeight: 1.65,
         }}
       >

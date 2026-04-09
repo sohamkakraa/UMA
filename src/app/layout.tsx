@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { ThemeInit } from "@/components/theme/ThemeInit";
+import { PatientStoreBootstrap } from "@/components/providers/PatientStoreBootstrap";
 
 export const metadata: Metadata = {
   title: "UMA — Ur Medical Assistant",
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning data-theme="dark">
       <body suppressHydrationWarning className="min-h-screen">
         <ThemeInit />
+        <PatientStoreBootstrap />
         {children}
       </body>
     </html>

@@ -15,14 +15,13 @@ function applyTheme(theme: Theme) {
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>(() =>
+    typeof window === "undefined" ? "dark" : (getStore().preferences?.theme ?? "dark")
+  );
 
   useEffect(() => {
-    const store = getStore();
-    const initial = store.preferences?.theme ?? "dark";
-    setTheme(initial);
-    applyTheme(initial);
-  }, []);
+    applyTheme(theme);
+  }, [theme]);
 
   function toggle() {
     const next = theme === "dark" ? "light" : "dark";

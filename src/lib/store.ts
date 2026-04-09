@@ -10,8 +10,172 @@ import {
 import { normalizeLabUnitString } from "@/lib/labUnits";
 import { enrichDocFromMarkdown } from "@/lib/parseMarkdownArtifact";
 import { mergeLexiconPatches, resolveCanonicalLabName } from "@/lib/standardized";
+import { patientStoreForApiPayload } from "@/lib/patientStoreApi";
 
 const KEY = "mv_patient_store_v1";
+const ACCOUNT_INIT = "mv_account_initialized_v1";
+
+let skipNextRemotePush = false;
+let pushDebounce: ReturnType<typeof setTimeout> | null = null;
+const PUSH_DEBOUNCE_MS = 900;
+
+export function clearLocalPatientStore() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(KEY);
+  localStorage.removeItem(ACCOUNT_INIT);
+}
+
+export async function pushPatientStoreToServer(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const store = getStore();
+  const body = patientStoreForApiPayload(store);
+  body.updatedAtISO = new Date().toISOString();
+  try {
+    const r = await fetch("/api/patient-store", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ store: body }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+function scheduleRemotePush() {
+  if (typeof window === "undefined" || skipNextRemotePush) return;
+  if (pushDebounce) clearTimeout(pushDebounce);
+  pushDebounce = setTimeout(() => {
+    pushDebounce = null;
+    void pushPatientStoreToServer();
+  }, PUSH_DEBOUNCE_MS);
+}
+
+/**
+ * Pull server copy after login or on app load; push local data if the server row is empty.
+ * Server wins when its updatedAtISO is newer or local has no meaningful data.
+ */
+export async function syncPatientStoreWithServer(): Promise<void> {
+  if (typeof window === "undefined") return;
+  let r: Response;
+  try {
+    r = await fetch("/api/patient-store", { credentials: "same-origin" });
+  } catch {
+    return;
+  }
+  if (r.status === 401) return;
+  if (!r.ok) return;
+
+  const j = (await r.json()) as { ok?: boolean; store?: PatientStore | null };
+  if (!j.ok) return;
+
+  const local = getStore();
+  const localHasData =
+    (local.docs?.length ?? 0) > 0 ||
+    Boolean((local.profile?.name ?? "").trim()) ||
+    (local.meds?.length ?? 0) > 0 ||
+    (local.labs?.length ?? 0) > 0;
+
+  if (j.store) {
+    const server = j.store;
+    const serverT = new Date(server.updatedAtISO).getTime();
+    const localT = new Date(local.updatedAtISO).getTime();
+    const serverEmpty =
+      !(server.docs?.length ?? 0) && !(server.profile?.name ?? "").trim() && !(server.meds?.length ?? 0);
+
+    if (serverEmpty && localHasData) {
+      await pushPatientStoreToServer();
+      return;
+    }
+    if (serverT >= localT || !localHasData) {
+      skipNextRemotePush = true;
+      try {
+        localStorage.setItem(KEY, JSON.stringify(server));
+        window.dispatchEvent(new CustomEvent("mv-store-update", { detail: server }));
+      } finally {
+        skipNextRemotePush = false;
+      }
+    } else {
+      await pushPatientStoreToServer();
+    }
+  } else if (localHasData) {
+    await pushPatientStoreToServer();
+  }
+}
+
+function profilePatchFromSession(session: { email?: string | null; phoneE164?: string | null }) {
+  const patch: Partial<PatientStore["profile"]> = {};
+  if (session.email) patch.email = session.email;
+  if (session.phoneE164) {
+    const m = session.phoneE164.match(/^(\+\d{1,4})(\d+)$/);
+    if (m) {
+      patch.countryCode = m[1];
+      patch.phone = m[2];
+    }
+  }
+  return patch;
+}
+
+export function createBlankPatientStore(
+  partialProfile?: Partial<PatientStore["profile"]>,
+): PatientStore {
+  return {
+    docs: [],
+    meds: [],
+    labs: [],
+    profile: {
+      name: "",
+      firstName: "",
+      lastName: "",
+      allergies: [],
+      conditions: [],
+      trends: [],
+      countryCode: partialProfile?.countryCode ?? "+1",
+      ...partialProfile,
+    },
+    preferences: {
+      theme: "dark",
+      onboarding: { lastStepReached: 1 as const },
+    },
+    standardLexicon: [],
+    updatedAtISO: new Date().toISOString(),
+  };
+}
+
+/** After OTP verification: seed a blank local record for brand-new devices, or merge session into an existing store. */
+export function afterOtpSignIn(session: { email?: string | null; phoneE164?: string | null }) {
+  if (typeof window === "undefined") return;
+  const hasStore = localStorage.getItem(KEY) !== null;
+  const inited = localStorage.getItem(ACCOUNT_INIT);
+  const sessionPatch = profilePatchFromSession(session);
+
+  if (!inited) {
+    if (hasStore) {
+      localStorage.setItem(ACCOUNT_INIT, "1");
+      const s = getStore();
+      const merged = { ...s, profile: { ...s.profile, ...sessionPatch } };
+      if ((merged.docs?.length ?? 0) > 0 && !merged.preferences.onboarding?.completedAtISO) {
+        merged.preferences = {
+          ...merged.preferences,
+          onboarding: {
+            ...merged.preferences.onboarding,
+            completedAtISO: merged.updatedAtISO ?? new Date().toISOString(),
+          },
+        };
+      }
+      saveStore(merged);
+    } else {
+      const blank = createBlankPatientStore(sessionPatch);
+      saveStore(blank);
+      localStorage.setItem(ACCOUNT_INIT, "1");
+    }
+    return;
+  }
+
+  const s = getStore();
+  saveStore({ ...s, profile: { ...s.profile, ...sessionPatch } });
+}
 
 const seedStore: PatientStore = {
   docs: [
@@ -110,7 +274,6 @@ const seedStore: PatientStore = {
   },
   preferences: {
     theme: "dark",
-    connectedTrackers: [],
   },
   standardLexicon: [],
   updatedAtISO: new Date().toISOString(),
@@ -133,7 +296,7 @@ export function rebuildLabsAndMedsFromDocuments(store: PatientStore) {
 
   function normalizeLabRow(l: ExtractedLab): ExtractedLab {
     const name = resolveCanonicalLabName(l.name, lex);
-    const nu = l.unit ? normalizeLabUnitString(l.unit, name) : "";
+        const nu = l.unit ? normalizeLabUnitString(l.unit) : "";
     return { ...l, name, unit: nu || l.unit?.trim() || undefined };
   }
 
@@ -193,8 +356,15 @@ export function getStore(): PatientStore {
   const raw = localStorage.getItem(KEY);
   if (!raw) return cloneSeed();
   try {
-    const parsed = JSON.parse(raw) as PatientStore;
-    const savedProfile = parsed.profile ?? {};
+    const parsed = JSON.parse(raw) as PatientStore & { wearables?: unknown; preferences?: { connectedTrackers?: unknown } };
+    const { wearables: _legacyWearables, ...parsedSansWearables } = parsed;
+    void _legacyWearables;
+    const savedProfile = parsedSansWearables.profile ?? {};
+    const rawPref = parsedSansWearables.preferences ?? {};
+    const { connectedTrackers: _legacyCt, ...preferencesSansTrackers } = rawPref as typeof rawPref & {
+      connectedTrackers?: unknown;
+    };
+    void _legacyCt;
     const seedP = seedStore.profile;
     const mergedMenstrual = {
       typicalCycleLengthDays:
@@ -212,7 +382,7 @@ export function getStore(): PatientStore {
 
     return {
       ...cloneSeed(),
-      ...parsed,
+      ...parsedSansWearables,
       profile: {
         ...seedP,
         ...savedProfile,
@@ -227,9 +397,16 @@ export function getStore(): PatientStore {
         },
         menstrualCycle: mergedMenstrual,
       },
-      preferences: { ...seedStore.preferences, ...parsed.preferences },
-      standardLexicon: Array.isArray(parsed.standardLexicon)
-        ? parsed.standardLexicon
+      preferences: {
+        ...seedStore.preferences,
+        ...preferencesSansTrackers,
+        onboarding: {
+          ...seedStore.preferences.onboarding,
+          ...preferencesSansTrackers.onboarding,
+        },
+      },
+      standardLexicon: Array.isArray(parsedSansWearables.standardLexicon)
+        ? parsedSansWearables.standardLexicon
         : cloneSeed().standardLexicon,
     };
   } catch {
@@ -245,6 +422,7 @@ export function saveStore(store: PatientStore) {
   try {
     window.dispatchEvent(new CustomEvent("mv-store-update", { detail: store }));
   } catch {}
+  scheduleRemotePush();
 }
 
 export function mergeExtractedDoc(

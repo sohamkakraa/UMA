@@ -14,7 +14,6 @@ import { getHydrationSafeStore, getStore, saveStore, removeDoc, mergeExtractedDo
 import { DocType, ExtractedDoc, ExtractedLab, ExtractedMedication, StandardLexiconEntry } from "@/lib/types";
 import { displaySummaryForDoc } from "@/lib/markdownDoc";
 import { labMatchesTrendMetric } from "@/lib/standardized";
-import { REQUIRED_TRACKER_METRICS } from "@/lib/trackers";
 import { summarizeMenstrualCycle } from "@/lib/menstrualCycle";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
@@ -176,6 +175,14 @@ export default function DashboardPage() {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("mv-store-update", onCustom as EventListener);
     };
+  }, []);
+
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash) return;
+    requestAnimationFrame(() => {
+      document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }, []);
 
   useEffect(() => {
@@ -349,10 +356,7 @@ export default function DashboardPage() {
     }),
     [hba1c, ldl, store.labs, lex]
   );
-  const selectedTrends =
-    (store.preferences.connectedTrackers?.length ?? 0) > 0
-      ? REQUIRED_TRACKER_METRICS
-      : (store.profile.trends ?? ["HbA1c", "LDL"]).slice(0, 4);
+  const selectedTrends = (store.profile.trends ?? ["HbA1c", "LDL"]).slice(0, 6);
   const trendCards = selectedTrends
     .map((name) => ({
       name,
@@ -380,14 +384,54 @@ export default function DashboardPage() {
     [store.profile.menstrualCycle]
   );
 
-  const flowPreview = useMemo(() => {
-    const d = store.profile.menstrualCycle?.flowLogDates ?? [];
+  const cycleBadgeTitle = useMemo(() => {
+    const mc = store.profile.menstrualCycle;
+    const s = cycleSummary;
+    const flowDates = mc?.flowLogDates ?? [];
+    const recentFlow =
+      flowDates.length > 0
+        ? ` Flow days logged (recent): ${flowDates
+            .slice()
+            .sort()
+            .reverse()
+            .slice(0, 6)
+            .join(", ")}${flowDates.length > 6 ? "…" : ""}.`
+        : "";
+    const phase = s.phaseLabel ? ` Approximate phase (not clinical): ${s.phaseLabel}.` : "";
+    const len = mc?.typicalCycleLengthDays
+      ? ` Typical cycle length you entered: ${mc.typicalCycleLengthDays} days.`
+      : "";
+    const last = mc?.lastPeriodStartISO?.trim()
+      ? ` Last period start you entered: ${mc.lastPeriodStartISO}.`
+      : "";
+    return `${s.headline}. ${s.detail}.${phase}${len}${last}${recentFlow} Estimates are approximate and not medical advice. Click to edit on Profile.`;
+  }, [store.profile.menstrualCycle, cycleSummary]);
+
+  const conditionBadgeTitle = useMemo(() => {
+    const c = store.profile.conditions;
+    if (!c.length) return "No conditions saved yet. Click to add or edit on Profile.";
+    const shown = c.slice(0, 10).join(", ");
+    return `${c.length} condition(s): ${shown}${c.length > 10 ? "…" : ""}. Click to edit on Profile.`;
+  }, [store.profile.conditions]);
+
+  const allergyBadgeTitle = useMemo(() => {
+    const a = store.profile.allergies;
+    if (!a.length) return "No allergies saved yet. Click to add or edit on Profile.";
+    const shown = a.slice(0, 10).join(", ");
+    return `${a.length} saved allerg${a.length === 1 ? "y" : "ies"}: ${shown}${a.length > 10 ? "…" : ""}. Click to edit on Profile.`;
+  }, [store.profile.allergies]);
+
+  const docBadgeTitle = useMemo(() => {
+    const n = store.docs.length;
+    return `${n} saved document${n === 1 ? "" : "s"}. Click to open Latest reports on the dashboard.`;
+  }, [store.docs.length]);
+
+  const dobBadgeTitle = useMemo(() => {
+    const d = store.profile.dob?.trim();
     return d
-      .slice()
-      .sort()
-      .reverse()
-      .slice(0, 4);
-  }, [store.profile.menstrualCycle?.flowLogDates]);
+      ? `Date of birth on file: ${d}. Click to edit on Profile.`
+      : "Date of birth not set. Click to add on Profile.";
+  }, [store.profile.dob]);
 
   const inlineDocs = recentDocs.slice(0, 4);
   const inlineMeds = recentMeds.slice(0, 4);
@@ -406,6 +450,14 @@ export default function DashboardPage() {
           0% { transform: translateX(-100%); opacity: 0.85; }
           50% { transform: translateX(80%); opacity: 1; }
           100% { transform: translateX(280%); opacity: 0.85; }
+        }
+        .snapshot-badge {
+          transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+        }
+        .snapshot-badge:hover {
+          transform: translateY(-2px);
+          box-shadow: var(--shadow);
+          border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
         }
       `}</style>
       <AppTopNav
@@ -427,19 +479,70 @@ export default function DashboardPage() {
                 visit.
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
-                <Badge>
+                <Badge
+                  as="button"
+                  type="button"
+                  className="snapshot-badge"
+                  title={dobBadgeTitle}
+                  aria-label={dobBadgeTitle}
+                  onClick={() => {
+                    window.location.href = "/profile#profile-patient-details";
+                  }}
+                >
                   <Calendar className="mr-1 h-3 w-3" />
                   DOB: {store.profile.dob || "Not set"}
                 </Badge>
-                <Badge>{store.profile.conditions.length} conditions</Badge>
-                <Badge>{store.profile.allergies.length} allergies</Badge>
-                <Badge>{store.docs.length} documents</Badge>
+                <Badge
+                  as="button"
+                  type="button"
+                  className="snapshot-badge"
+                  title={conditionBadgeTitle}
+                  aria-label={conditionBadgeTitle}
+                  onClick={() => {
+                    window.location.href = "/profile#profile-conditions";
+                  }}
+                >
+                  {store.profile.conditions.length} conditions
+                </Badge>
+                <Badge
+                  as="button"
+                  type="button"
+                  className="snapshot-badge"
+                  title={allergyBadgeTitle}
+                  aria-label={allergyBadgeTitle}
+                  onClick={() => {
+                    window.location.href = "/profile#profile-allergies";
+                  }}
+                >
+                  {store.profile.allergies.length} allergies
+                </Badge>
+                <Badge
+                  as="button"
+                  type="button"
+                  className="snapshot-badge"
+                  title={docBadgeTitle}
+                  aria-label={docBadgeTitle}
+                  onClick={() => {
+                    window.location.href = "/dashboard#dashboard-latest-reports";
+                  }}
+                >
+                  {store.docs.length} documents
+                </Badge>
                 {store.profile.menstrualCycle?.lastPeriodStartISO ||
                 (store.profile.menstrualCycle?.flowLogDates?.length ?? 0) > 0 ? (
-                  <span title={`${cycleSummary.headline} · ${cycleSummary.detail}`} className="inline-block max-w-[min(100%,20rem)]">
-                    <Badge className="max-w-full truncate inline-flex">
+                  <span className="inline-block max-w-[min(100%,20rem)]">
+                    <Badge
+                      as="button"
+                      type="button"
+                      className="snapshot-badge max-w-full min-w-0 truncate"
+                      title={cycleBadgeTitle}
+                      aria-label={cycleBadgeTitle}
+                      onClick={() => {
+                        window.location.href = "/profile#profile-cycle-tracking";
+                      }}
+                    >
                       <Droplets className="mr-1 h-3 w-3 shrink-0" />
-                      <span className="truncate">
+                      <span className="min-w-0 truncate">
                         {cycleSummary.headline} · {cycleSummary.detail}
                       </span>
                     </Badge>
@@ -472,33 +575,6 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <Card>
-          <CardContent className="py-3 px-4 flex flex-wrap items-center gap-x-3 gap-y-2 justify-between">
-            <div className="flex items-start gap-2 min-w-0 flex-1">
-              <Droplets className="h-4 w-4 shrink-0 mt-0.5 text-[var(--accent-2)]" aria-hidden />
-              <div className="min-w-0 text-sm leading-snug">
-                <span className="font-medium text-[var(--fg)]">{cycleSummary.headline}</span>
-                <span className="mv-muted"> · </span>
-                <span className="mv-muted">{cycleSummary.detail}</span>
-                {flowPreview.length > 0 ? (
-                  <span className="mv-muted">
-                    {" "}
-                    · Flow: {flowPreview.join(", ")}
-                    {(store.profile.menstrualCycle?.flowLogDates?.length ?? 0) > flowPreview.length ? "…" : ""}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              className="h-8 text-xs shrink-0"
-              onClick={() => (window.location.href = "/profile")}
-            >
-              Edit
-            </Button>
-          </CardContent>
-        </Card>
-
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardContent className="py-4">
@@ -529,7 +605,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <Card>
+          <Card id="dashboard-latest-reports" className="scroll-mt-24">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -551,7 +627,7 @@ export default function DashboardPage() {
                   {inlineDocs.map((d) => (
                     <div key={d.id} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
                       <div className="flex items-start justify-between gap-2">
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <Badge>{d.type}</Badge>
                             <span className="text-xs mv-muted">{d.dateISO || "Date not available"}</span>
@@ -563,11 +639,11 @@ export default function DashboardPage() {
                         </div>
                         <button
                           type="button"
-                          className="h-8 w-8 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] grid place-items-center"
+                          className="h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] grid place-items-center"
                           onClick={() => deleteDoc(d.id)}
                           aria-label="Delete document"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4 shrink-0" />
                         </button>
                       </div>
                     </div>
@@ -611,28 +687,28 @@ export default function DashboardPage() {
                     return (
                     <div key={key} className="group rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
                       <div className="flex items-start justify-between gap-2">
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold">{m.name}</p>
                           <p className="text-xs mv-muted">
                             {[m.dose, m.frequency].filter(Boolean).join(" · ") || "Details not added"}
                           </p>
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex shrink-0 items-center gap-1">
                           <button
                             type="button"
-                            className="h-8 w-8 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] grid place-items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition"
+                            className="h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] grid place-items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition"
                             onClick={() => setActiveMedInfo(isOpen ? null : key)}
                             aria-label="Medication information"
                           >
-                            <Info className="h-4 w-4" />
+                            <Info className="h-4 w-4 shrink-0" />
                           </button>
                           <button
                             type="button"
-                            className="h-8 w-8 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] grid place-items-center"
+                            className="h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] grid place-items-center"
                             onClick={() => removeMed(i)}
                             aria-label="Remove medication"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-4 w-4 shrink-0" />
                           </button>
                         </div>
                       </div>

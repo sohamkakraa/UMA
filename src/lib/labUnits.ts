@@ -12,7 +12,7 @@ function squash(s: string): string {
 }
 
 /** Collapse common OCR / regional spellings to a canonical display token. */
-export function normalizeLabUnitString(raw: string | undefined, _canonicalLabName?: string): string {
+export function normalizeLabUnitString(raw: string | undefined): string {
   if (!raw?.trim()) return "";
   const u = squash(raw.toLowerCase());
 

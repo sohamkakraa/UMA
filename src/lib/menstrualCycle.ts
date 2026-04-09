@@ -47,7 +47,7 @@ export type CycleSummary = {
 /**
  * Rough, non-clinical phase labels for display only. Not medical advice.
  */
-function approximatePhase(dayOfCycle: number, cycleLen: number): string {
+function approximatePhase(dayOfCycle: number): string {
   if (dayOfCycle <= 5) return "Menstrual phase (approx.)";
   if (dayOfCycle <= 13) return "Follicular phase (approx.)";
   if (dayOfCycle <= 17) return "Ovulation window (approx.)";
@@ -110,7 +110,7 @@ export function summarizeMenstrualCycle(
   const nextPeriodStartISO = toYMD(nextStart);
   const daysUntilNextPeriod = Math.max(0, daysBetweenUTC(today, nextStart));
 
-  const phaseLabel = approximatePhase(dayOfCycle, cycleLen);
+  const phaseLabel = approximatePhase(dayOfCycle);
 
   let headline = `Day ${dayOfCycle}`;
   if (flowLoggedToday) headline = `Flow · ${headline}`;

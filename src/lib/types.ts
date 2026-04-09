@@ -1,6 +1,6 @@
 export type DocType = "Lab report" | "Prescription" | "Bill" | "Imaging" | "Other";
 
-/** Synthetic labs from connected trackers (`addTrackerLabData`). */
+/** Synthetic labs from legacy rows not tied to a document (e.g. old demo data). */
 export const UMA_TRACKER_LAB_SOURCE = "__uma_tracker__" as const;
 
 /** User- or agent-proposed metric synonyms merged into the runtime lexicon (see `docs/standardized.md`). */
@@ -115,7 +115,11 @@ export type PatientStore = {
   };
   preferences: {
     theme: "dark" | "light";
-    connectedTrackers?: string[];
+    /** First-run wizard after OTP sign-in (local device only). */
+    onboarding?: {
+      completedAtISO?: string;
+      lastStepReached?: 1 | 2;
+    };
   };
   /** Merged with `DEFAULT_LEXICON` for resolving lab keys and charts. */
   standardLexicon?: StandardLexiconEntry[];

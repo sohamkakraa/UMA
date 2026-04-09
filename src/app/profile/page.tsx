@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { buildPhoneDialOptions } from "@/lib/phoneDialOptions";
 import { Badge } from "@/components/ui/Badge";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
-import { getHydrationSafeStore, getStore, saveStore } from "@/lib/store";
+import { clearLocalPatientStore, getHydrationSafeStore, getStore, saveStore } from "@/lib/store";
 import { AppTopNav } from "@/components/nav/AppTopNav";
-import { addTrackerLabData, TRACKERS } from "@/lib/trackers";
-import { Droplets, Plus, LogOut, Plug, Ruler, Unplug } from "lucide-react";
+import { Droplets, Plus, LogOut, Ruler } from "lucide-react";
 
 export default function ProfilePage() {
   const [store, setStore] = useState(() => getHydrationSafeStore());
@@ -18,7 +19,7 @@ export default function ProfilePage() {
   const [trendOpen, setTrendOpen] = useState(false);
   const [flowDateInput, setFlowDateInput] = useState("");
   const providers = ["Dr. A. Kumar", "Dr. Avery Torres", "Dr. Melina Shah", "Dr. Daniel Kim", "Dr. Priya Iyer"];
-  const countryCodes = ["+1", "+44", "+61", "+65", "+91", "+971"];
+  const dialOptions = useMemo(() => buildPhoneDialOptions(), []);
   const sexOptions = ["Male", "Female", "Prefer not to say"];
   const trendOptions = [
     "HbA1c",
@@ -34,7 +35,7 @@ export default function ProfilePage() {
   ];
 
   useEffect(() => {
-    setStore(getStore());
+    queueMicrotask(() => setStore(getStore()));
     const onFocus = () => setStore(getStore());
     const onStoreUpdate = () => setStore(getStore());
     window.addEventListener("focus", onFocus);
@@ -45,8 +46,17 @@ export default function ProfilePage() {
     };
   }, []);
 
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash) return;
+    requestAnimationFrame(() => {
+      document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
+
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
+    clearLocalPatientStore();
     window.location.href = "/login";
   }
 
@@ -99,35 +109,6 @@ export default function ProfilePage() {
     });
   }
 
-  function connectTracker(name: string) {
-    const connected = new Set(store.preferences.connectedTrackers ?? []);
-    connected.add(name);
-    const next = {
-      ...store,
-      labs: addTrackerLabData(store.labs),
-      preferences: {
-        ...store.preferences,
-        connectedTrackers: Array.from(connected),
-      },
-    };
-    setStore(next);
-    saveStore(next);
-  }
-
-  function disconnectTracker(name: string) {
-    const connected = new Set(store.preferences.connectedTrackers ?? []);
-    connected.delete(name);
-    const next = {
-      ...store,
-      preferences: {
-        ...store.preferences,
-        connectedTrackers: Array.from(connected),
-      },
-    };
-    setStore(next);
-    saveStore(next);
-  }
-
   function addAllergy() {
     const value = allergyInput.trim();
     if (!value) return;
@@ -171,7 +152,7 @@ export default function ProfilePage() {
 
       <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
         <div className="grid gap-4 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
+          <Card id="profile-patient-details" className="scroll-mt-24 lg:col-span-2">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-medium">Patient details</h2>
@@ -204,8 +185,8 @@ export default function ProfilePage() {
                 </label>
                 <label className="text-xs mv-muted">
                   Sex
-                  <select
-                    className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--fg)]"
+                  <Select
+                    className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] py-2 text-sm text-[var(--fg)]"
                     value={store.profile.sex ?? ""}
                     onChange={(e) => updateProfile({ sex: e.target.value || undefined })}
                   >
@@ -215,7 +196,7 @@ export default function ProfilePage() {
                         {s}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label className="text-xs mv-muted">
                   Email
@@ -228,17 +209,18 @@ export default function ProfilePage() {
                 <div className="text-xs mv-muted">
                   Phone
                   <div className="mt-1 grid grid-cols-[110px_1fr] gap-2">
-                    <select
-                      className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--fg)]"
+                    <Select
+                      className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] py-2 text-sm text-[var(--fg)] min-w-0 truncate"
                       value={store.profile.countryCode ?? "+1"}
                       onChange={(e) => updateProfile({ countryCode: e.target.value })}
+                      aria-label="Country calling code"
                     >
-                      {countryCodes.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
+                      {dialOptions.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                     <Input
                       value={store.profile.phone ?? ""}
                       onChange={(e) => updateProfile({ phone: e.target.value })}
@@ -248,8 +230,8 @@ export default function ProfilePage() {
                 </div>
                 <label className="text-xs mv-muted md:col-span-2">
                   Primary care provider
-                  <select
-                    className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--fg)]"
+                  <Select
+                    className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] py-2 text-sm text-[var(--fg)]"
                     value={store.profile.primaryCareProvider ?? ""}
                     onChange={(e) =>
                       updateProfile({ primaryCareProvider: e.target.value ? e.target.value : undefined })
@@ -261,7 +243,7 @@ export default function ProfilePage() {
                         {p}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label className="text-xs mv-muted">
                   Next visit date
@@ -329,29 +311,6 @@ export default function ProfilePage() {
                 <div className="text-xs mv-muted">
                   Your theme preference is saved locally on this device.
                 </div>
-                <div className="mv-card-muted rounded-2xl p-4">
-                  <p className="text-xs mv-muted">Health trackers</p>
-                  <p className="mt-1 text-sm">Connect trackers to sync required metrics to dashboard.</p>
-                  <div className="mt-3 space-y-2">
-                    {TRACKERS.map((t) => {
-                      const connected = (store.preferences.connectedTrackers ?? []).includes(t);
-                      return (
-                        <div key={t} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 flex items-center justify-between gap-2">
-                          <span className="text-sm">{t}</span>
-                          {connected ? (
-                            <Button variant="ghost" className="h-8 gap-2" onClick={() => disconnectTracker(t)}>
-                              <Unplug className="h-4 w-4" /> Disconnect
-                            </Button>
-                          ) : (
-                            <Button className="h-8 gap-2" onClick={() => connectTracker(t)}>
-                              <Plug className="h-4 w-4" /> Connect
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
               </div>
             </CardContent>
           </Card>
@@ -418,7 +377,7 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card id="profile-cycle-tracking" className="scroll-mt-24">
             <CardHeader>
               <div className="flex items-center gap-2">
                 <Droplets className="h-4 w-4 text-[var(--accent-2)]" />
@@ -497,7 +456,7 @@ export default function ProfilePage() {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <Card>
+          <Card id="profile-allergies" className="scroll-mt-24">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-medium">Allergies</h2>
@@ -530,7 +489,7 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card id="profile-conditions" className="scroll-mt-24">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-medium">Conditions</h2>

@@ -59,10 +59,11 @@ export default function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const suggestions = [
-    "What are my latest lab values?",
-    "Summarize my active medications",
-    "What should I discuss at my next visit?",
-    "Add this report to my dashboard",
+    "What changed between my latest report and the one before?",
+    "How do my newest labs compare to last time?",
+    "What does my newest report mean for me, in plain language?",
+    "Walk me through my meds and what to watch for.",
+    "What should I mention at my next visit from my records?",
   ];
 
   useEffect(() => {
@@ -387,21 +388,21 @@ export default function ChatPage() {
                 </div>
               )}
               {messages.length <= 1 && !loading && (
-                <div className="flex flex-wrap gap-2">
+                <div className="flex w-full flex-wrap gap-2">
                   {suggestions.map((s) => (
                     <button
                       key={s}
                       type="button"
-                      className="rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-xs hover:bg-[var(--panel-2)]"
+                      className="group inline-flex w-max max-w-full items-center gap-2 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--panel)]/40 px-3 py-2.5 text-left text-xs leading-tight text-[var(--fg)] transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--accent)_28%,var(--border))] hover:bg-[var(--panel-2)] hover:shadow-[var(--shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] sm:whitespace-nowrap sm:py-2"
                       onClick={() => sendSuggestion(s)}
                     >
-                      {s}
+                      <Sparkles
+                        className="h-4 w-4 shrink-0 text-[var(--accent)] transition-transform duration-200 group-hover:scale-110"
+                        aria-hidden
+                      />
+                      <span className="mv-muted min-w-0 group-hover:text-[var(--fg)] transition-colors duration-200">{s}</span>
                     </button>
                   ))}
-                  <div className="w-full rounded-2xl border border-dashed border-[var(--border)] p-3 text-xs mv-muted flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-[var(--accent)] shrink-0" />
-                    Try: &quot;What changed in my latest report compared to my previous one?&quot;
-                  </div>
                 </div>
               )}
             </div>

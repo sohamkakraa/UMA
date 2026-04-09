@@ -261,7 +261,7 @@ function toRefUnitNumeric(canonical: string, n: number, displayUnitNorm: string,
 
 export function interpretLab(lab: ExtractedLab, extensions?: StandardLexiconEntry[]): LabInterpretation {
   const canonical = resolveCanonicalLabName(lab.name, extensions);
-  const displayUnit = normalizeLabUnitString(lab.unit, canonical) || lab.unit?.trim() || "";
+  const displayUnit = normalizeLabUnitString(lab.unit) || lab.unit?.trim() || "";
   const displayValue = String(lab.value ?? "").trim();
   const numeric = parseLabNumeric(displayValue);
   const ref = REF_BY_CANONICAL[canonical];

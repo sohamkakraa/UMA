@@ -408,7 +408,7 @@ export async function extractMedicalPdfFromBuffer(
       facilityName: docCore.facilityName,
       markdownArtifact,
     };
-    const doc = applyParsedMarkdownToDoc(baseDoc, parsedMd, clientLexicon);
+    const doc = applyParsedMarkdownToDoc(baseDoc, parsedMd);
 
     const nameCheck = verifyPatientNameOnDocument(patientName, docCore.patientNamesOnDoc);
     if (!nameCheck.ok && !inp.skipPatientNameCheck) {

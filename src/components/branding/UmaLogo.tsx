@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { cn } from "@/components/ui/cn";
 
 const LOGO_SRC = "/logo.svg";
@@ -13,14 +14,13 @@ export function UmaLogo({
 }) {
   return (
     <div className={cn("inline-flex items-center gap-2.5", className)}>
-      {/* Static asset from /public/logo.svg */}
-      <img
+      <Image
         src={LOGO_SRC}
         alt="UMA"
         width={32}
         height={32}
         className="h-8 w-8 shrink-0 object-contain"
-        decoding="async"
+        priority={false}
       />
       {!compact && (
         <div className="leading-tight">

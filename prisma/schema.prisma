@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  email      String?  @unique
+  phoneE164  String?  @unique @map("phone_e164")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  patientRecord PatientRecord?
+}
+
+model OtpChallenge {
+  id        String   @id @default(cuid())
+  lookupKey String   @unique @map("lookup_key")
+  codeHash  String   @map("code_hash")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+}
+
+model PatientRecord {
+  userId    String   @id @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  data      Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+}

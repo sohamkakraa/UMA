@@ -116,7 +116,7 @@ function parseLabTable(
   extensions: StandardLexiconEntry[]
 ): { labs: ExtractedLab[]; rawNames: string[] } {
   if (table.length < 2) return { labs: [], rawNames: [] };
-  let row0 = 0;
+  const row0 = 0;
   let dataStart = 1;
   if (table[1] && isSepRow(table[1])) dataStart = 2;
 
@@ -259,7 +259,7 @@ function extractBulletSection(md: string, titleRegex: string): string[] {
 function extractDetailSubsections(md: string): ExtractedSection[] {
   const idx = md.search(/\n##\s+Details\b/i);
   if (idx < 0) return [];
-  let rest = md.slice(idx);
+  const rest = md.slice(idx);
   const next = rest.slice(1).search(/\n##\s+\S/);
   const block = next >= 0 ? rest.slice(0, next + 1) : rest;
   const sections: ExtractedSection[] = [];
@@ -355,11 +355,7 @@ export function parseStructuredFromMarkdown(
 /**
  * Apply an existing parse result to a document (no re-parse — use from server after `parseStructuredFromMarkdown`).
  */
-export function applyParsedMarkdownToDoc(
-  doc: ExtractedDoc,
-  p: ParsedFromMarkdown,
-  _extensions: StandardLexiconEntry[] = []
-): ExtractedDoc {
+export function applyParsedMarkdownToDoc(doc: ExtractedDoc, p: ParsedFromMarkdown): ExtractedDoc {
   const labs = mergeLabsByKey(doc.labs, p.labs);
   const medications = mergeMedsByName(doc.medications, p.medications);
 
@@ -397,5 +393,5 @@ export function enrichDocFromMarkdown(
   const md = doc.markdownArtifact?.trim();
   if (!md) return doc;
   const p = parseStructuredFromMarkdown(md, doc.dateISO, extensions);
-  return applyParsedMarkdownToDoc(doc, p, extensions);
+  return applyParsedMarkdownToDoc(doc, p);
 }

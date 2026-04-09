@@ -4,7 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -12,7 +16,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "@prisma/client": "^6.19.0",
+    "prisma": "^6.19.0",
     "clsx": "^2.1.1",
+    "country-codes-list": "^2.0.0",
     "lucide-react": "^0.563.0",
     "nanoid": "^5.1.6",
     "next": "16.1.6",

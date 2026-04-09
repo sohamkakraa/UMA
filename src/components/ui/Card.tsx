@@ -3,11 +3,17 @@ import { cn } from "./cn";
 export function Card({
   className,
   children,
+  id,
 }: {
   className?: string;
   children: React.ReactNode;
+  id?: string;
 }) {
-  return <div className={cn("mv-card rounded-3xl", className)}>{children}</div>;
+  return (
+    <div id={id} className={cn("mv-card rounded-3xl", className)}>
+      {children}
+    </div>
+  );
 }
 
 export function CardHeader({ children }: { children: React.ReactNode }) {
