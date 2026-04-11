@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
-import { buildPhoneDialOptions } from "@/lib/phoneDialOptions";
+// Phone feature disabled for now
+// import { buildPhoneDialOptions } from "@/lib/phoneDialOptions";
 import { Badge } from "@/components/ui/Badge";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { clearLocalPatientStore, getHydrationSafeStore, getStore, saveStore } from "@/lib/store";
@@ -19,7 +20,7 @@ export default function ProfilePage() {
   const [trendOpen, setTrendOpen] = useState(false);
   const [flowDateInput, setFlowDateInput] = useState("");
   const providers = ["Dr. A. Kumar", "Dr. Avery Torres", "Dr. Melina Shah", "Dr. Daniel Kim", "Dr. Priya Iyer"];
-  const dialOptions = useMemo(() => buildPhoneDialOptions(), []);
+  // const dialOptions = useMemo(() => buildPhoneDialOptions(), []);
   const sexOptions = ["Male", "Female", "Prefer not to say"];
   const trendOptions = [
     "HbA1c",
@@ -208,31 +209,11 @@ export default function ProfilePage() {
                     onChange={(e) => updateProfile({ email: e.target.value })}
                   />
                 </label>
-                <div className="text-xs mv-muted">
+                {/* Phone number — disabled for now, feature coming soon */}
+                {/* <div className="text-xs mv-muted">
                   Mobile number
-                  <div className="mt-1 flex rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] overflow-hidden focus-within:ring-2 focus-within:ring-[var(--accent)]/30">
-                    <Select
-                      className="shrink-0 w-[4.75rem] sm:w-[5.25rem] rounded-none border-0 border-r border-[var(--border)] bg-transparent py-2.5 pl-2 pr-1 text-sm text-[var(--fg)]"
-                      value={store.profile.countryCode ?? ""}
-                      onChange={(e) => updateProfile({ countryCode: e.target.value })}
-                      aria-label="Country calling code"
-                    >
-                      <option value="">Code</option>
-                      {dialOptions.map((c) => (
-                        <option key={c.value} value={c.value} title={c.countryName}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </Select>
-                    <Input
-                      className="flex-1 min-w-0 rounded-none border-0 bg-transparent py-2.5 px-3 text-sm"
-                      value={store.profile.phone ?? ""}
-                      onChange={(e) => updateProfile({ phone: e.target.value })}
-                      placeholder="National number"
-                      autoComplete="tel-national"
-                    />
-                  </div>
-                </div>
+                  ...
+                </div> */}
                 <label className="text-xs mv-muted md:col-span-2">
                   Primary care provider
                   <Select

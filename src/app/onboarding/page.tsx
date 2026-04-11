@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
@@ -9,13 +9,14 @@ import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { AppTopNav } from "@/components/nav/AppTopNav";
 import { getStore, saveStore } from "@/lib/store";
-import { buildPhoneDialOptions } from "@/lib/phoneDialOptions";
+// Phone feature disabled for now
+// import { buildPhoneDialOptions } from "@/lib/phoneDialOptions";
 
 const sexOptions = ["Male", "Female", "Prefer not to say"];
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const dialOptions = useMemo(() => buildPhoneDialOptions(), []);
+  // const dialOptions = useMemo(() => buildPhoneDialOptions(), []);
   const [phase, setPhase] = useState<1 | 2>(1);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -63,19 +64,12 @@ export default function OnboardingPage() {
       return;
     }
     const em = email.trim().toLowerCase();
-    const digits = phone.replace(/\D/g, "");
     if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
       setErr("Please enter a valid email.");
       return;
     }
-    if (!countryCode.trim()) {
-      setErr("Choose your country calling code, then enter your mobile number.");
-      return;
-    }
-    if (digits.length < 6) {
-      setErr("Please enter a valid mobile number (digits only, no country code in this box).");
-      return;
-    }
+    // Phone validation disabled — feature coming soon
+    const digits = phone.replace(/\D/g, "");
 
     setSaving(true);
     try {
@@ -178,7 +172,7 @@ export default function OnboardingPage() {
             <CardHeader>
               <h2 className="text-sm font-medium">Personal details</h2>
               <p className="text-xs mv-muted mt-1">
-                We link your email and phone so you can sign in with either next time.
+                We&apos;ll use your email to sign you in.
               </p>
             </CardHeader>
             <CardContent>
@@ -224,39 +218,11 @@ export default function OnboardingPage() {
                       autoComplete="email"
                     />
                   </label>
-                  <div className="text-xs mv-muted sm:col-span-2">
+                  {/* Phone number — disabled for now, feature coming soon */}
+                  {/* <div className="text-xs mv-muted sm:col-span-2">
                     Mobile number
-                    <p className="text-[11px] mv-muted mt-0.5 font-normal">
-                      Pick your country code first, then type your number without the leading zero.
-                    </p>
-                    <div className="mt-1 flex rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] overflow-hidden focus-within:ring-2 focus-within:ring-[var(--accent)]/30">
-                      <Select
-                        className="shrink-0 w-[4.75rem] sm:w-[5.25rem] rounded-none border-0 border-r border-[var(--border)] bg-transparent py-2.5 pl-2 pr-1 text-sm text-[var(--fg)]"
-                        value={countryCode}
-                        onChange={(e) => setCountryCode(e.target.value)}
-                        aria-label="Country calling code"
-                        required
-                      >
-                        <option value="" disabled>
-                          Code
-                        </option>
-                        {dialOptions.map((o) => (
-                          <option key={o.value} value={o.value} title={o.countryName}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </Select>
-                      <Input
-                        className="flex-1 min-w-0 rounded-none border-0 bg-transparent py-2.5 px-3 text-sm"
-                        inputMode="tel"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        placeholder="e.g. 6 12345678"
-                        autoComplete="tel-national"
-                        aria-label="National mobile number"
-                      />
-                    </div>
-                  </div>
+                    ...
+                  </div> */}
                 </div>
                 {err && (
                   <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
