@@ -8,7 +8,11 @@ import {
   isBetaDemoIdentifier,
   shouldExposeBetaDemoOtp,
 } from "@/lib/auth/betaDemo";
-import { isOtpEmailDeliveryConfigured, sendSignInOtpEmail } from "@/lib/auth/sendSignInOtp";
+import {
+  isOtpEmailDeliveryConfigured,
+  messageForSendSignInOtpFailure,
+  sendSignInOtpEmail,
+} from "@/lib/auth/sendSignInOtp";
 
 export const runtime = "nodejs";
 
@@ -79,8 +83,19 @@ export async function POST(req: Request) {
   if (emailConfigured) {
     const sent = await sendSignInOtpEmail(norm.display, code);
     if (!sent.ok) {
+      const allowInlineOtp = devReturn || betaExpose;
+      if (allowInlineOtp) {
+        return NextResponse.json({
+          ok: true,
+          channel: norm.kind,
+          ...(devReturn ? { devOtp: code } : {}),
+          ...(betaExpose ? { betaDemoOtp: code } : {}),
+          message:
+            "Email could not be sent (check Resend domain and AUTH_EMAIL_FROM). For this Preview/dev session the code is shown below so you can continue testing.",
+        });
+      }
       return NextResponse.json(
-        { ok: false, error: "We could not send the sign-in email. Try again in a moment." },
+        { ok: false, error: messageForSendSignInOtpFailure(sent) },
         { status: 503 },
       );
     }
