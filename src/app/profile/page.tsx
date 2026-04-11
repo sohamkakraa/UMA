@@ -8,7 +8,6 @@ import { Select } from "@/components/ui/Select";
 // Phone feature disabled for now
 // import { buildPhoneDialOptions } from "@/lib/phoneDialOptions";
 import { Badge } from "@/components/ui/Badge";
-import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { clearLocalPatientStore, getHydrationSafeStore, getStore, saveStore } from "@/lib/store";
 import { AppTopNav } from "@/components/nav/AppTopNav";
 import { Droplets, Plus, LogOut, Ruler } from "lucide-react";
@@ -152,8 +151,8 @@ export default function ProfilePage() {
       />
 
       <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Card id="profile-patient-details" className="scroll-mt-24 lg:col-span-2">
+        <div className="grid gap-4">
+          <Card id="profile-patient-details" className="scroll-mt-24">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-medium">Patient details</h2>
@@ -281,25 +280,6 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <h2 className="text-sm font-medium">Preferences</h2>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="mv-card-muted rounded-2xl p-4">
-                  <p className="text-xs mv-muted">Theme</p>
-                  <p className="mt-1 text-sm">Switch between light and dark mode.</p>
-                  <div className="mt-3">
-                    <ThemeToggle />
-                  </div>
-                </div>
-                <div className="text-xs mv-muted">
-                  Your theme preference is saved locally on this device.
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">

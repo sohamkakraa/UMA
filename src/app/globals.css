@@ -168,3 +168,40 @@ html[data-theme="dark"] select.uma-select {
   animation: uma-logo-soft-pulse 1.6s ease-in-out infinite;
   border-color: color-mix(in srgb, var(--accent) 38%, transparent);
 }
+
+/* ─── Body view: theme-matched SVG silhouettes & organ pulse ───────────── */
+img.body-anatomy-silhouette[data-body-theme="light"],
+img.body-anatomy-organ[data-body-theme="light"],
+img.body-anatomy-silhouette[data-body-theme="dark"],
+img.body-anatomy-organ[data-body-theme="dark"] {
+  transition: filter 0.4s ease, opacity 0.4s ease;
+}
+
+img.body-anatomy-silhouette[data-body-theme="light"] {
+  filter: brightness(0.36) contrast(1.14) sepia(0.1);
+  opacity: 0.88;
+}
+
+img.body-anatomy-silhouette[data-body-theme="dark"] {
+  filter: brightness(1.18) contrast(1.08) saturate(0.88);
+  opacity: 0.9;
+}
+
+/* Faint body behind organ callouts */
+img.body-anatomy-silhouette--underlay[data-body-theme="light"] {
+  filter: brightness(0.38) contrast(1.12) sepia(0.08);
+  opacity: 0.24;
+}
+
+img.body-anatomy-silhouette--underlay[data-body-theme="dark"] {
+  filter: brightness(1.1) contrast(1.05) saturate(0.88);
+  opacity: 0.2;
+}
+
+img.body-anatomy-organ[data-body-theme="light"] {
+  filter: drop-shadow(0 6px 18px rgba(18, 24, 24, 0.14));
+}
+
+img.body-anatomy-organ[data-body-theme="dark"] {
+  filter: brightness(1.06) contrast(1.06) drop-shadow(0 10px 32px rgba(0, 0, 0, 0.5));
+}

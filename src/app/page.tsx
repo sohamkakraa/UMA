@@ -48,9 +48,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ─── Dedication to Uma Kakra ──────────────────────── */}
-        <DedicationSection />
-
         <section className="border-t border-[var(--border)] bg-[var(--panel)]/60 py-16 md:py-20">
           <div className="mx-auto max-w-6xl px-4">
             <h2 className="text-2xl md:text-3xl font-semibold mv-title">What you can use today</h2>
@@ -175,6 +172,9 @@ export default function HomePage() {
             </p>
           </div>
         </section>
+
+        {/* ─── Dedication to Uma Kakra ──────────────────────── */}
+        <DedicationSection />
 
         <section className="border-t border-[var(--border)] mv-surface py-16">
           <div className="mx-auto max-w-6xl px-4 text-center">

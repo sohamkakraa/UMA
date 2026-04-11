@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/components/ui/cn";
 import { UmaLogo } from "@/components/branding/UmaLogo";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
 type NavItem = {
   href: string;
@@ -93,7 +94,10 @@ export function AppTopNav({
           </div>
         </div>
 
-        <div className="hidden sm:flex min-w-[180px] items-center justify-end gap-2">{rightSlot}</div>
+        <div className="hidden sm:flex min-w-[180px] items-center justify-end gap-2">
+          <ThemeToggle />
+          {rightSlot}
+        </div>
 
         <button
           type="button"
@@ -107,7 +111,10 @@ export function AppTopNav({
 
       {mobileOpen && (
         <div className="sm:hidden border-t border-[var(--border)] px-4 py-2 bg-[var(--panel)]/95">
-          <div className="flex items-center justify-end gap-2">{rightSlot}</div>
+          <div className="flex items-center justify-end gap-2">
+            <ThemeToggle />
+            {rightSlot}
+          </div>
         </div>
       )}
       <div className="sr-only" aria-live="polite">

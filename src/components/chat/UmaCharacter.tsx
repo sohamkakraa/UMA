@@ -9,6 +9,8 @@ interface UmaCharacterProps {
   mood?: Mood;
   compact?: boolean;
   className?: string;
+  /** Pixel font size for the ASCII art (overrides compact’s tiny default). */
+  fontPx?: number;
 }
 
 /* ─── Character → colour mapping ─────────────────────────── *
@@ -187,6 +189,7 @@ export function UmaCharacter({
   mood = "idle",
   compact = false,
   className = "",
+  fontPx,
 }: UmaCharacterProps) {
   const [frameIdx, setFrameIdx] = useState(0);
 
@@ -234,7 +237,7 @@ export function UmaCharacter({
       }
       style={{
         fontFamily: "'Courier New', Consolas, 'Liberation Mono', monospace",
-        fontSize: compact ? "5.5px" : undefined,
+        fontSize: fontPx != null ? `${fontPx}px` : compact ? "5.5px" : undefined,
         lineHeight: compact ? 1.2 : 1.18,
         margin: 0,
         padding: 0,

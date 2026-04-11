@@ -110,58 +110,6 @@ export default function DocDetailClient() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <h2 className="text-sm font-medium">Downloads</h2>
-            <p className="text-xs mv-muted mt-1">
-              Files stay on this device in UMA. Not medical advice.
-            </p>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex flex-wrap gap-2">
-              {record.markdownArtifact ? (
-                <Button
-                  variant="ghost"
-                  className="gap-2 border border-[var(--border)]"
-                  onClick={() => downloadMarkdownFile(record.markdownArtifact!, markdownDownloadName)}
-                >
-                  <Download className="h-4 w-4" />
-                  Download agent markdown (.md)
-                </Button>
-              ) : (
-                <Button variant="ghost" className="gap-2 border border-[var(--border)]" onClick={downloadSyntheticMarkdown}>
-                  <Download className="h-4 w-4" />
-                  Download markdown from stored data
-                </Button>
-              )}
-              {record.originalPdfBase64 ? (
-                <Button
-                  variant="ghost"
-                  className="gap-2 border border-[var(--border)]"
-                  onClick={() => downloadPdfFromBase64(record.originalPdfBase64!, pdfDownloadName)}
-                >
-                  <Download className="h-4 w-4" />
-                  Download original PDF
-                </Button>
-              ) : null}
-            </div>
-            {!record.markdownArtifact ? (
-              <p className="text-xs mv-muted">
-                Agent-generated markdown is created when you upload a PDF with OpenAI enabled. This button builds a file
-                from the structured data already saved for this record.
-              </p>
-            ) : null}
-            {record.markdownArtifact && !record.originalPdfBase64 ? (
-              <p className="text-xs mv-muted">
-                Original PDF is available only for records you confirmed from an upload on this device.
-              </p>
-            ) : null}
-            {!record.markdownArtifact && !record.originalPdfBase64 ? (
-              <p className="text-xs mv-muted">No original PDF is stored for this record.</p>
-            ) : null}
-          </CardContent>
-        </Card>
-
         {record.sections?.length ? (
           <Card>
             <CardHeader>
@@ -222,6 +170,58 @@ export default function DocDetailClient() {
             </CardContent>
           </Card>
         ) : null}
+
+        <Card>
+          <CardHeader>
+            <h2 className="text-sm font-medium">Downloads</h2>
+            <p className="text-xs mv-muted mt-1">
+              Files stay on this device in UMA. Not medical advice.
+            </p>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {record.markdownArtifact ? (
+                <Button
+                  variant="ghost"
+                  className="gap-2 border border-[var(--border)]"
+                  onClick={() => downloadMarkdownFile(record.markdownArtifact!, markdownDownloadName)}
+                >
+                  <Download className="h-4 w-4" />
+                  Download agent markdown (.md)
+                </Button>
+              ) : (
+                <Button variant="ghost" className="gap-2 border border-[var(--border)]" onClick={downloadSyntheticMarkdown}>
+                  <Download className="h-4 w-4" />
+                  Download markdown from stored data
+                </Button>
+              )}
+              {record.originalPdfBase64 ? (
+                <Button
+                  variant="ghost"
+                  className="gap-2 border border-[var(--border)]"
+                  onClick={() => downloadPdfFromBase64(record.originalPdfBase64!, pdfDownloadName)}
+                >
+                  <Download className="h-4 w-4" />
+                  Download original PDF
+                </Button>
+              ) : null}
+            </div>
+            {!record.markdownArtifact ? (
+              <p className="text-xs mv-muted">
+                Agent-generated markdown is created when you upload a PDF with OpenAI enabled. This button builds a file
+                from the structured data already saved for this record.
+              </p>
+            ) : null}
+            {record.markdownArtifact && !record.originalPdfBase64 ? (
+              <p className="text-xs mv-muted">
+                Original PDF is available only for records you confirmed from an upload on this device.
+              </p>
+            ) : null}
+            {!record.markdownArtifact && !record.originalPdfBase64 ? (
+              <p className="text-xs mv-muted">No original PDF is stored for this record.</p>
+            ) : null}
+          </CardContent>
+        </Card>
       </main>
     </div>
   );

@@ -232,21 +232,6 @@ export default function ChatPage() {
         <section className="flex-1 min-h-0 rounded-none sm:rounded-3xl border-y border-[var(--border)] sm:border bg-[var(--panel)] sm:shadow-[var(--shadow)] flex flex-col overflow-hidden">
           <div className="border-b border-[var(--border)] px-4 py-3 flex items-center justify-between gap-3 shrink-0">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="relative shrink-0 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] grid place-items-center overflow-hidden" style={{ width: 54, height: 48, padding: '3px 2px' }}>
-                <UmaCharacter mood={petMood} compact />
-                {celebrate && (
-                  <>
-                    <span
-                      className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-[var(--accent)]"
-                      style={{ animation: "umaPop 900ms ease-out" }}
-                    />
-                    <span
-                      className="absolute -top-1 left-1 h-2.5 w-2.5 rounded-full bg-[var(--accent-2)]"
-                      style={{ animation: "umaPop 900ms ease-out 120ms" }}
-                    />
-                  </>
-                )}
-              </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold truncate">{companionLabel}</p>
                 <p className="text-xs mv-muted truncate">Conversation plus optional PDF for your records</p>
@@ -261,8 +246,9 @@ export default function ChatPage() {
             ref={scrollRef}
             className="flex-1 min-h-0 overflow-y-auto bg-[var(--panel-2)]/35 flex flex-col justify-end"
           >
-            <div className="mx-auto max-w-4xl w-full px-3 sm:px-4 py-5 sm:py-6 space-y-4">
-              {messages.map((m, i) => (
+            <div className="mx-auto max-w-4xl w-full px-3 sm:px-4 py-5 sm:py-6 flex flex-col gap-4 min-h-0">
+              <div className="space-y-4">
+                {messages.map((m, i) => (
                 <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start flex-col gap-2"}>
                   <div
                     className={[
@@ -318,8 +304,8 @@ export default function ChatPage() {
                     </div>
                   ) : null}
                 </div>
-              ))}
-              {loading && (
+                ))}
+                {loading && (
                 <div className="flex justify-start">
                   <div
                     className={[
@@ -367,8 +353,8 @@ export default function ChatPage() {
                     )}
                   </div>
                 </div>
-              )}
-              {messages.length <= 1 && !loading && (
+                )}
+                {messages.length <= 1 && !loading && (
                 <div className="flex w-full flex-wrap gap-2">
                   {suggestions.map((s) => (
                     <button
@@ -385,7 +371,26 @@ export default function ChatPage() {
                     </button>
                   ))}
                 </div>
-              )}
+                )}
+              </div>
+
+              <div className="sticky bottom-0 z-[2] mt-auto flex justify-center pt-2 pb-1 [mask-image:linear-gradient(to_top,black_65%,transparent)]">
+                <div className="relative rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 shadow-[var(--shadow)] translate-y-1/3">
+                  <UmaCharacter mood={petMood} compact fontPx={8} />
+                  {celebrate && (
+                    <>
+                      <span
+                        className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-[var(--accent)]"
+                        style={{ animation: "umaPop 900ms ease-out" }}
+                      />
+                      <span
+                        className="absolute -top-1 left-1 h-2.5 w-2.5 rounded-full bg-[var(--accent-2)]"
+                        style={{ animation: "umaPop 900ms ease-out 120ms" }}
+                      />
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
