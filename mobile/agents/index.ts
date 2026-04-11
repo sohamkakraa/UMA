@@ -210,7 +210,7 @@ export function getResponseMetadata(response: AgentResponse) {
  * ```typescript
  * const context = buildAgentContext({
  *   store: patientStore,
- *   recentWearables: [/* ... */],
+ *   recentWearables: [],
  *   conversationHistory: chatHistory,
  *   userTimezone: "America/Los_Angeles",
  * });
