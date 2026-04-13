@@ -409,46 +409,149 @@ export function detectDocumentLabOverlap(
   existingDocs: ExtractedDoc[],
   lex: StandardLexiconEntry[] = []
 ): { overlappingDocTitle: string; overlapPct: number } | null {
-  const newLabs = enrichDocFromMarkdown(newDoc, lex).labs ?? [];
-  if (newLabs.length < 3) return null;
+  const result = detectDocumentOverlapFull(newDoc, existingDocs, lex);
+  if (!result) return null;
+  return { overlappingDocTitle: result.existingDoc.title ?? "existing report", overlapPct: result.overlapPct };
+}
+
+/**
+ * Outcome of comparing a newly uploaded document against existing docs.
+ *
+ * - `exact_duplicate`: The new doc has the same labs with the same values — discard.
+ * - `new_is_superset`: The new doc contains everything the existing has plus more — upgrade/replace.
+ * - `existing_is_superset`: The existing doc already has everything the new one has — discard.
+ * - `partial_overlap`: Some shared labs but neither is a strict superset — add as new, note overlap.
+ */
+export type DocOverlapKind = "exact_duplicate" | "new_is_superset" | "existing_is_superset" | "partial_overlap";
+
+export type DocOverlapResult = {
+  kind: DocOverlapKind;
+  existingDoc: ExtractedDoc;
+  overlapPct: number;
+  /** How many labs the new doc has that the existing one doesn't. */
+  newExtraCount: number;
+  /** How many labs the existing doc has that the new one doesn't. */
+  existingExtraCount: number;
+};
+
+/**
+ * Rich overlap detection — returns the match kind and the actual existing doc reference
+ * so callers can decide whether to merge, replace, or discard.
+ */
+export function detectDocumentOverlapFull(
+  newDoc: ExtractedDoc,
+  existingDocs: ExtractedDoc[],
+  lex: StandardLexiconEntry[] = []
+): DocOverlapResult | null {
+  const newEnriched = enrichDocFromMarkdown(newDoc, lex);
+  const newLabs = newEnriched.labs ?? [];
+  if (newLabs.length < 2) return null;
 
   const newNames = new Set(
     newLabs.map((l) => resolveCanonicalLabName(l.name, lex).toLowerCase())
   );
 
-  let bestMatch: { overlappingDocTitle: string; overlapPct: number } | null = null;
+  /** Build a value fingerprint for exact-duplicate detection: "hemoglobin|14.6|g/dl" */
+  const newLabFingerprints = new Set(
+    newLabs.map((l) => {
+      const name = resolveCanonicalLabName(l.name, lex).toLowerCase();
+      const val = normalizeLabNumericValue(l.value);
+      const unit = (l.unit ?? "").toLowerCase().trim();
+      return `${name}|${val}|${unit}`;
+    })
+  );
+
+  let bestMatch: DocOverlapResult | null = null;
 
   for (const existing of existingDocs) {
     if (!newDoc.dateISO || !existing.dateISO) continue;
-
-    // Same calendar month (allows for ±1 day date extraction differences)
     if (yearMonth(newDoc.dateISO) !== yearMonth(existing.dateISO)) continue;
 
-    const existingLabs = enrichDocFromMarkdown(existing, lex).labs ?? [];
-    if (existingLabs.length < 3) continue;
+    const existingEnriched = enrichDocFromMarkdown(existing, lex);
+    const existingLabs = existingEnriched.labs ?? [];
+    if (existingLabs.length < 2) continue;
 
     const existingNames = new Set(
       existingLabs.map((l) => resolveCanonicalLabName(l.name, lex).toLowerCase())
     );
 
-    // Use the smaller set as the denominator so "CBC ⊂ Full panel" scores high
-    let sharedCount = 0;
+    const existingLabFingerprints = new Set(
+      existingLabs.map((l) => {
+        const name = resolveCanonicalLabName(l.name, lex).toLowerCase();
+        const val = normalizeLabNumericValue(l.value);
+        const unit = (l.unit ?? "").toLowerCase().trim();
+        return `${name}|${val}|${unit}`;
+      })
+    );
+
+    // Count shared lab *names* (ignoring values for subset detection)
+    let sharedNameCount = 0;
     for (const name of newNames) {
-      if (existingNames.has(name)) sharedCount++;
+      if (existingNames.has(name)) sharedNameCount++;
     }
 
-    const overlapPct = sharedCount / Math.min(newNames.size, existingNames.size);
-    if (overlapPct >= 0.35 && (!bestMatch || overlapPct > bestMatch.overlapPct)) {
-      bestMatch = { overlappingDocTitle: existing.title ?? "existing report", overlapPct };
+    const smallerSetSize = Math.min(newNames.size, existingNames.size);
+    if (smallerSetSize === 0) continue;
+    const overlapPct = sharedNameCount / smallerSetSize;
+    if (overlapPct < 0.35) continue;
+
+    const newExtraCount = [...newNames].filter((n) => !existingNames.has(n)).length;
+    const existingExtraCount = [...existingNames].filter((n) => !newNames.has(n)).length;
+
+    // Determine kind
+    let kind: DocOverlapKind;
+
+    // Check if all shared labs have identical values (exact duplicate check)
+    let sharedValueCount = 0;
+    for (const fp of newLabFingerprints) {
+      if (existingLabFingerprints.has(fp)) sharedValueCount++;
+    }
+    const allSharedValuesMatch = sharedValueCount >= sharedNameCount;
+
+    if (allSharedValuesMatch && newExtraCount === 0 && existingExtraCount === 0) {
+      // Same labs, same values — exact duplicate
+      kind = "exact_duplicate";
+    } else if (allSharedValuesMatch && newExtraCount > 0 && existingExtraCount === 0) {
+      // New doc has everything existing has + more labs — new is a superset (upgrade)
+      kind = "new_is_superset";
+    } else if (allSharedValuesMatch && newExtraCount === 0 && existingExtraCount > 0) {
+      // Existing doc already has everything + more — existing is superset (discard new)
+      kind = "existing_is_superset";
+    } else {
+      // Partial overlap — some shared, some unique to each side
+      kind = "partial_overlap";
+    }
+
+    if (!bestMatch || overlapPct > bestMatch.overlapPct) {
+      bestMatch = { kind, existingDoc: existing, overlapPct, newExtraCount, existingExtraCount };
     }
   }
+
   return bestMatch;
 }
 
-export function mergeExtractedDoc(
+/**
+ * Smart merge: detects duplicates and partial overlaps before adding a document.
+ *
+ * Returns an action description so the UI can show the right feedback message.
+ *
+ * Scenarios:
+ * 1. **exact_duplicate** → discard, return notice
+ * 2. **new_is_superset** → replace existing doc with the new complete version
+ * 3. **existing_is_superset** → discard new, return notice
+ * 4. **partial_overlap** → add as new doc (labs auto-deduped by rebuildLabsAndMedsFromDocuments)
+ * 5. **no_overlap** → add as new doc
+ */
+export type SmartMergeResult = {
+  action: "added" | "upgraded" | "discarded_exact" | "discarded_subset" | "added_with_overlap";
+  store: PatientStore;
+  message: string;
+};
+
+export function smartMergeExtractedDoc(
   doc: ExtractedDoc,
   opts?: { standardLexiconPatches?: StandardLexiconEntry[] }
-) {
+): SmartMergeResult {
   const store = getStore();
 
   if (opts?.standardLexiconPatches?.length) {
@@ -457,18 +560,87 @@ export function mergeExtractedDoc(
 
   const lex = store.standardLexicon ?? [];
   const enriched = enrichDocFromMarkdown(doc, lex);
+  const overlap = detectDocumentOverlapFull(enriched, store.docs, lex);
 
-  // Add doc
-  store.docs = [enriched, ...store.docs].slice(0, 500);
+  // ── No overlap: straightforward add ────────────────────────────
+  if (!overlap) {
+    store.docs = [enriched, ...store.docs].slice(0, 500);
+    rebuildLabsAndMedsFromDocuments(store);
+    mergeDocProfileFields(store, enriched);
+    saveStore(store);
+    return {
+      action: "added",
+      store,
+      message: "Saved. Your home screen, file list, and charts now include this report.",
+    };
+  }
 
-  rebuildLabsAndMedsFromDocuments(store);
+  const existingTitle = overlap.existingDoc.title ?? "an existing report";
 
+  switch (overlap.kind) {
+    // ── Exact duplicate: discard ───────────────────────────────────
+    case "exact_duplicate":
+      return {
+        action: "discarded_exact",
+        store,
+        message: `This report is identical to "${existingTitle}" already in your records. No changes made.`,
+      };
+
+    // ── New doc is a superset (incomplete → complete upgrade) ──────
+    case "new_is_superset": {
+      // Replace the old doc with the new one, preserving the old doc's id for
+      // any external references, but taking all content from the new version.
+      const upgradedDoc: ExtractedDoc = {
+        ...enriched,
+        id: overlap.existingDoc.id, // keep original id for continuity
+        uploadedAtISO: overlap.existingDoc.uploadedAtISO ?? enriched.uploadedAtISO,
+        // keep original PDF if the new one doesn't have it
+        originalPdfBase64: enriched.originalPdfBase64 ?? overlap.existingDoc.originalPdfBase64,
+      };
+      store.docs = store.docs.map((d) =>
+        d.id === overlap.existingDoc.id ? upgradedDoc : d
+      );
+      rebuildLabsAndMedsFromDocuments(store);
+      mergeDocProfileFields(store, upgradedDoc);
+      saveStore(store);
+      return {
+        action: "upgraded",
+        store,
+        message: `Updated "${existingTitle}" with ${overlap.newExtraCount} additional lab result${overlap.newExtraCount === 1 ? "" : "s"} from the complete report. Title and summary refreshed.`,
+      };
+    }
+
+    // ── Existing doc is already the superset: discard new ─────────
+    case "existing_is_superset":
+      return {
+        action: "discarded_subset",
+        store,
+        message: `"${existingTitle}" already contains all ${enriched.labs?.length ?? 0} lab results from this upload (plus ${overlap.existingExtraCount} more). No changes made.`,
+      };
+
+    // ── Partial overlap: add as new but note the overlap ──────────
+    case "partial_overlap":
+    default: {
+      store.docs = [enriched, ...store.docs].slice(0, 500);
+      rebuildLabsAndMedsFromDocuments(store);
+      mergeDocProfileFields(store, enriched);
+      saveStore(store);
+      const pct = Math.round(overlap.overlapPct * 100);
+      return {
+        action: "added_with_overlap",
+        store,
+        message: `Saved. This report shares ${pct}% of its labs with "${existingTitle}" — duplicate lab values are deduped automatically.`,
+      };
+    }
+  }
+}
+
+/** Merge allergies, conditions, and primary care provider from a doc into the store profile. */
+function mergeDocProfileFields(store: PatientStore, enriched: ExtractedDoc) {
   const firstDocDoctor = enriched.doctors?.map((d) => d.trim()).find(Boolean);
   if (firstDocDoctor && !(store.profile.primaryCareProvider ?? "").trim()) {
     store.profile.primaryCareProvider = firstDocDoctor;
   }
-
-  // Merge allergies / conditions from doc-level extraction
   if (enriched.allergies?.length) {
     const next = new Set([...(store.profile.allergies ?? []), ...enriched.allergies]);
     store.profile.allergies = Array.from(next).slice(0, 200);
@@ -477,9 +649,29 @@ export function mergeExtractedDoc(
     const next = new Set([...(store.profile.conditions ?? []), ...enriched.conditions]);
     store.profile.conditions = Array.from(next).slice(0, 200);
   }
+}
 
-  saveStore(store);
-  return store;
+/**
+ * Legacy merge — always adds as a new document. Kept for backward compatibility.
+ * Prefer `smartMergeExtractedDoc` for the upload flow which handles duplicates.
+ */
+export function mergeExtractedDoc(
+  doc: ExtractedDoc,
+  opts?: { standardLexiconPatches?: StandardLexiconEntry[] }
+) {
+  const result = smartMergeExtractedDoc(doc, opts);
+  // For backward compat, if smart merge discarded, force-add anyway
+  if (result.action === "discarded_exact" || result.action === "discarded_subset") {
+    const store = getStore();
+    const lex = store.standardLexicon ?? [];
+    const enriched = enrichDocFromMarkdown(doc, lex);
+    store.docs = [enriched, ...store.docs].slice(0, 500);
+    rebuildLabsAndMedsFromDocuments(store);
+    mergeDocProfileFields(store, enriched);
+    saveStore(store);
+    return store;
+  }
+  return result.store;
 }
 
 export function removeDoc(docId: string) {

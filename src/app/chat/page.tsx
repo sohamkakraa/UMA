@@ -11,7 +11,7 @@ import { ChatMarkdown } from "@/components/chat/ChatMarkdown";
 import { UmaCharacter } from "@/components/chat/UmaCharacter";
 import { newHealthLogId, normalizeHealthLogs } from "@/lib/healthLogs";
 import { isMedicationFormKind } from "@/lib/medicationFormPresets";
-import { getStore, mergeExtractedDoc, saveStore, detectDocumentLabOverlap } from "@/lib/store";
+import { getStore, saveStore, smartMergeExtractedDoc } from "@/lib/store";
 import type {
   ChatQuickReply,
   ExtractedDoc,
@@ -229,15 +229,9 @@ export default function ChatPage() {
         /* keep doc without embedded pdf */
       }
     }
-    const currentStore = getStore();
-    const overlapInfo = detectDocumentLabOverlap(doc, currentStore.docs, currentStore.standardLexicon ?? []);
-    mergeExtractedDoc(doc, { standardLexiconPatches: proposal.lexiconPatches });
+    const result = smartMergeExtractedDoc(doc, { standardLexiconPatches: proposal.lexiconPatches });
     setLastPdfForMerge(null);
-    const baseNotice = "Saved. This file is now on your home screen, file list, and charts.";
-    const overlapNotice = overlapInfo
-      ? ` Note: this report shares ${Math.round(overlapInfo.overlapPct * 100)}% of its labs with "${overlapInfo.overlappingDocTitle}" — lab values from both are deduped automatically.`
-      : "";
-    setRecordNotice(baseNotice + overlapNotice);
+    setRecordNotice(result.message);
     setMessages((m) => [
       ...m.map((msg) => (msg.role === "assistant" ? { ...msg, mergeProposal: undefined } : msg)),
       {

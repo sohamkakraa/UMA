@@ -12,7 +12,7 @@ import { DashboardHealthLogSection } from "@/components/health/DashboardHealthLo
 import { HealthTrendsSection } from "@/components/labs/HealthTrendsSection";
 import { LabReadingTile } from "@/components/labs/LabReadingTile";
 import { RecordNoticeToast } from "@/components/ui/RecordNoticeToast";
-import { getHydrationSafeStore, getStore, saveStore, removeDoc, mergeExtractedDoc, detectDocumentLabOverlap } from "@/lib/store";
+import { getHydrationSafeStore, getStore, saveStore, removeDoc, smartMergeExtractedDoc } from "@/lib/store";
 import { useGlobalUpload } from "@/lib/uploadContext";
 import {
   DocType,
@@ -728,23 +728,17 @@ export default function DashboardPage() {
         doc = uploadPreview;
       }
     }
-    const currentStore = getStore();
-    const overlapInfo = detectDocumentLabOverlap(doc, currentStore.docs, currentStore.standardLexicon ?? []);
-    const next = mergeExtractedDoc(doc, {
+    const result = smartMergeExtractedDoc(doc, {
       standardLexiconPatches: uploadLexiconPatches,
     });
-    setStore(next);
+    setStore(result.store);
     setUploadFile(null);
     setUploadPreview(null);
     setUploadLexiconPatches([]);
     setUploadNameMismatch(null);
     setUploadError(null);
     setOverlay(null);
-    const baseNotice = "Saved. Your home screen, file list, and charts now include this report.";
-    const overlapNotice = overlapInfo
-      ? ` Note: this report shares ${Math.round(overlapInfo.overlapPct * 100)}% of its labs with "${overlapInfo.overlappingDocTitle}" — duplicate lab values are deduped automatically.`
-      : "";
-    setRecordNotice(baseNotice + overlapNotice);
+    setRecordNotice(result.message);
     globalUpload.clear();
   }
 
