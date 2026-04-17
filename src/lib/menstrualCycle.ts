@@ -1,4 +1,4 @@
-/** Local calendar date YYYY-MM-DD (no time zone shift for “today”). */
+/** Local calendar date YYYY-MM-DD (no time zone shift for "today"). */
 export function localTodayYMD(): string {
   const d = new Date();
   const y = d.getFullYear();
@@ -25,7 +25,22 @@ export function daysBetweenUTC(a: Date, b: Date): number {
   return Math.floor((ub - ua) / ms);
 }
 
+export function addDays(d: Date, n: number): Date {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+export function toYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 import type { MenstrualCyclePrefs } from "@/lib/types";
+
+export type CyclePhase = "menstrual" | "follicular" | "ovulation" | "luteal";
 
 export type CycleSummary = {
   /** Plain-language headline for dashboard */
@@ -36,35 +51,59 @@ export type CycleSummary = {
   dayOfCycle?: number;
   /** Approximate phase label (not clinical) */
   phaseLabel?: string;
+  /** Phase identifier */
+  phase?: CyclePhase;
   /** YYYY-MM-DD of estimated next period start */
   nextPeriodStartISO?: string;
   /** Days from today until next period (≥0) */
   daysUntilNextPeriod?: number;
+  /** Estimated ovulation day of current cycle (1-based) */
+  ovulationDayOfCycle?: number;
+  /** YYYY-MM-DD of estimated ovulation */
+  ovulationDateISO?: string;
+  /** Days from today until estimated ovulation (negative = already passed this cycle) */
+  daysUntilOvulation?: number;
+  /** YYYY-MM-DD inclusive start of fertile window */
+  fertileWindowStartISO?: string;
+  /** YYYY-MM-DD inclusive end of fertile window */
+  fertileWindowEndISO?: string;
+  /** Whether today is within the fertile window */
+  inFertileWindow?: boolean;
+  /** Days until fertile window opens (if it hasn't started yet) */
+  daysUntilFertileWindow?: number;
   /** True if today is in flowLogDates */
   flowLoggedToday: boolean;
+  /** Estimated period length in days */
+  periodLengthDays: number;
+  /** Cycle length */
+  cycleLengthDays: number;
 };
 
 /**
- * Rough, non-clinical phase labels for display only. Not medical advice.
+ * Correct, OB-GYN-aligned cycle phases:
+ *
+ * Key insight (matches Flo/Clue/Ovia): the luteal phase is relatively
+ * fixed at ~14 days for most women. Therefore:
+ *
+ *   ovulation day = cycleLength − 14
+ *   fertile window = ovulationDay − 5 to ovulationDay + 1  (6 days, sperm survive 5 days + egg viable ~1 day)
+ *
+ * Phase boundaries:
+ *   Menstrual   → Day 1 to periodLength
+ *   Follicular  → Day (periodLength+1) to (ovulationDay−1)   [overlaps day 1 too but display starts after bleed]
+ *   Ovulation   → ovulationDay−1 to ovulationDay+1  (3-day window shown to user)
+ *   Luteal      → ovulationDay+2 to cycleLength
  */
-function approximatePhase(dayOfCycle: number): string {
-  if (dayOfCycle <= 5) return "Menstrual phase (approx.)";
-  if (dayOfCycle <= 13) return "Follicular phase (approx.)";
-  if (dayOfCycle <= 17) return "Ovulation window (approx.)";
-  return "Luteal phase (approx.)";
-}
-
-function addDays(d: Date, n: number): Date {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  x.setDate(x.getDate() + n);
-  return x;
-}
-
-function toYMD(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function computePhase(
+  dayOfCycle: number,
+  cycleLen: number,
+  periodLen: number
+): { phase: CyclePhase; label: string } {
+  const ovDay = Math.max(cycleLen - 14, periodLen + 2);
+  if (dayOfCycle <= periodLen) return { phase: "menstrual", label: "Period" };
+  if (dayOfCycle < ovDay - 1) return { phase: "follicular", label: "Follicular phase" };
+  if (dayOfCycle <= ovDay + 1) return { phase: "ovulation", label: "Ovulation window" };
+  return { phase: "luteal", label: "Luteal phase" };
 }
 
 export function summarizeMenstrualCycle(
@@ -75,13 +114,16 @@ export function summarizeMenstrualCycle(
   const flowLoggedToday = flowDates.has(todayYMD);
 
   const cycleLen = Math.min(45, Math.max(21, mc?.typicalCycleLengthDays ?? 28));
+  const periodLen = Math.min(10, Math.max(1, mc?.periodLengthDays ?? 5));
   const last = mc?.lastPeriodStartISO?.trim();
 
   if (!last) {
     return {
-      headline: "Cycle (beta)",
-      detail: flowLoggedToday ? "Flow logged · add last period for day count" : "Add last period on profile",
+      headline: "Period tracker",
+      detail: flowLoggedToday ? "Flow logged · add your last period date to see predictions" : "Add last period date to get predictions",
       flowLoggedToday,
+      periodLengthDays: periodLen,
+      cycleLengthDays: cycleLen,
     };
   }
 
@@ -89,45 +131,87 @@ export function summarizeMenstrualCycle(
   const today = parseYMD(todayYMD);
   if (!start || !today) {
     return {
-      headline: "Cycle (beta)",
-      detail: "Fix date format (YYYY-MM-DD)",
+      headline: "Period tracker",
+      detail: "Invalid date — use YYYY-MM-DD format",
       flowLoggedToday,
+      periodLengthDays: periodLen,
+      cycleLengthDays: cycleLen,
     };
   }
 
   const diff = daysBetweenUTC(start, today);
   if (diff < 0) {
     return {
-      headline: "Cycle (beta)",
-      detail: "Last period is in the future",
+      headline: "Period tracker",
+      detail: "Last period date is in the future — check the date",
       flowLoggedToday,
+      periodLengthDays: periodLen,
+      cycleLengthDays: cycleLen,
     };
   }
 
-  const dayOfCycle = (diff % cycleLen) + 1;
   const cyclesCompleted = Math.floor(diff / cycleLen);
+  const dayOfCycle = (diff % cycleLen) + 1;
+
+  // Next period
   const nextStart = addDays(start, (cyclesCompleted + 1) * cycleLen);
   const nextPeriodStartISO = toYMD(nextStart);
   const daysUntilNextPeriod = Math.max(0, daysBetweenUTC(today, nextStart));
 
-  const phaseLabel = approximatePhase(dayOfCycle);
+  // Ovulation (luteal phase = 14 days, fixed)
+  const ovulationDayOfCycle = Math.max(cycleLen - 14, periodLen + 2);
+  const currentCycleStart = addDays(start, cyclesCompleted * cycleLen);
+  const ovulationDate = addDays(currentCycleStart, ovulationDayOfCycle - 1);
+  const ovulationDateISO = toYMD(ovulationDate);
+  const daysUntilOvulation = daysBetweenUTC(today, ovulationDate);
 
+  // Fertile window: 5 days before ovulation + ovulation day + 1 day after
+  const fertileStart = addDays(ovulationDate, -5);
+  const fertileEnd = addDays(ovulationDate, 1);
+  const fertileWindowStartISO = toYMD(fertileStart);
+  const fertileWindowEndISO = toYMD(fertileEnd);
+
+  const fertileStartDay = daysBetweenUTC(today, fertileStart);
+  const fertileEndDay = daysBetweenUTC(today, fertileEnd);
+  const inFertileWindow = fertileStartDay <= 0 && fertileEndDay >= 0;
+  const daysUntilFertileWindow = fertileStartDay > 0 ? fertileStartDay : undefined;
+
+  const { phase, label: phaseLabel } = computePhase(dayOfCycle, cycleLen, periodLen);
+
+  // Build headline
   let headline = `Day ${dayOfCycle}`;
-  if (flowLoggedToday) headline = `Flow · ${headline}`;
+  if (flowLoggedToday) headline = `Flow · Day ${dayOfCycle}`;
 
-  const detail =
-    daysUntilNextPeriod === 0
-      ? `Next period ~ today`
-      : `Next ~ ${nextPeriodStartISO} (${daysUntilNextPeriod}d)`;
+  // Build detail
+  let detail: string;
+  if (daysUntilNextPeriod === 0) {
+    detail = "Next period ~ today";
+  } else if (daysUntilNextPeriod === 1) {
+    detail = "Next period tomorrow";
+  } else if (daysUntilNextPeriod <= 7) {
+    detail = `Next period in ${daysUntilNextPeriod} days`;
+  } else {
+    detail = `Next period ~ ${nextPeriodStartISO} (${daysUntilNextPeriod}d)`;
+  }
 
   return {
     headline,
     detail,
     dayOfCycle,
     phaseLabel,
+    phase,
     nextPeriodStartISO,
     daysUntilNextPeriod,
+    ovulationDayOfCycle,
+    ovulationDateISO,
+    daysUntilOvulation,
+    fertileWindowStartISO,
+    fertileWindowEndISO,
+    inFertileWindow,
+    daysUntilFertileWindow,
     flowLoggedToday,
+    periodLengthDays: periodLen,
+    cycleLengthDays: cycleLen,
   };
 }
 

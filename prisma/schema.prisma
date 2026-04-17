@@ -17,7 +17,25 @@ model User {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  patientRecord PatientRecord?
+  whatsappPhone    String?  @unique @map("whatsapp_phone")
+  whatsappVerified Boolean  @default(false) @map("whatsapp_verified")
+
+  patientRecord    PatientRecord?
+  whatsappMessages WhatsAppMessage[]
+}
+
+model WhatsAppMessage {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  waId      String   @map("wa_id")
+  role      String
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@index([waId, createdAt])
+  @@map("whatsapp_messages")
 }
 
 model OtpChallenge {
@@ -33,6 +51,20 @@ model PatientRecord {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   data      Json
   updatedAt DateTime @updatedAt @map("updated_at")
+}
+
+/**
+ * Database-backed rate limit counter (VULN-007).
+ * Replaces the in-memory Map which resets on every serverless cold start.
+ * Each row tracks a sliding window per key (e.g. "otp:1.2.3.4").
+ */
+model RateLimit {
+  key       String   @id
+  count     Int      @default(0)
+  windowEnd DateTime @map("window_end")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("rate_limits")
 }
 
 /** Demo / wiring table (Neon tutorial parity); not part of core health data flows. */

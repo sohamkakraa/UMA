@@ -1,18 +1,28 @@
-/** Shared OTP hashing and stable lookup keys (used with database-backed challenges). */
+/**
+ * Shared OTP hashing and stable lookup keys (used with database-backed challenges).
+ *
+ * Security: uses HMAC-SHA256 (via Node crypto) instead of FNV-1a.
+ * FNV-1a is a 32-bit non-cryptographic hash — all 1M possible OTP codes can be
+ * precomputed and matched against a leaked hash table in milliseconds.
+ * HMAC-SHA256 with a server-side salt makes offline brute-force infeasible.
+ * Fixed: VULN-004 — replaced FNV-1a with HMAC-SHA256 keyed on AUTH_SECRET.
+ */
+import { createHmac } from "crypto";
 
-function simpleHash(input: string): string {
-  let h = 2166136261;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i)!;
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0).toString(16);
+function getHashSalt(): string {
+  // Use AUTH_SECRET as HMAC key; fall back to a stable dev-only constant.
+  // In production AUTH_SECRET must be set (enforced in sessionToken.ts).
+  return process.env.AUTH_SECRET || "uma-dev-hash-salt-do-not-use-in-prod";
+}
+
+function hmacSha256(input: string): string {
+  return createHmac("sha256", getHashSalt()).update(input).digest("hex");
 }
 
 export function hashOtpCode(code: string): string {
-  return simpleHash(`uma:otp:${code}`);
+  return hmacSha256(`uma:otp:${code}`);
 }
 
 export function otpStorageKey(normalizedKey: string): string {
-  return simpleHash(`uma:key:${normalizedKey}`);
+  return hmacSha256(`uma:key:${normalizedKey}`);
 }

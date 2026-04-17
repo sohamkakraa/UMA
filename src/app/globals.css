@@ -45,6 +45,7 @@ html,
 body {
   height: 100%;
   min-height: 100dvh;
+  overflow-x: hidden;
 }
 
 body {
@@ -412,3 +413,22 @@ img.body-anatomy-organ[data-body-theme="dark"] {
 .uma-chat-md tbody tr:nth-child(even) {
   background: color-mix(in srgb, var(--panel-2) 60%, transparent);
 }
+
+/* ── Inline markdown prose for document detail pages ─────── */
+.prose-uma p { margin-bottom: 0.5rem; }
+.prose-uma p:last-child { margin-bottom: 0; }
+.prose-uma strong { font-weight: 600; color: var(--fg); }
+.prose-uma em { font-style: italic; }
+.prose-uma ul { list-style: disc; padding-left: 1.25rem; margin-bottom: 0.5rem; }
+.prose-uma ol { list-style: decimal; padding-left: 1.25rem; margin-bottom: 0.5rem; }
+.prose-uma li { margin-bottom: 0.25rem; }
+.prose-uma table { width: 100%; border-collapse: collapse; font-size: 0.75rem; margin-bottom: 0.75rem; }
+.prose-uma th { text-align: left; font-weight: 600; padding: 0.375rem 0.5rem; border-bottom: 1px solid var(--border); }
+.prose-uma td { padding: 0.375rem 0.5rem; border-bottom: 1px solid var(--border); color: var(--muted); }
+.prose-uma h1, .prose-uma h2, .prose-uma h3 { font-weight: 600; color: var(--fg); margin-bottom: 0.375rem; }
+.prose-uma h1 { font-size: 1rem; }
+.prose-uma h2 { font-size: 0.875rem; }
+.prose-uma h3 { font-size: 0.8125rem; }
+.prose-uma code { font-family: monospace; font-size: 0.8125rem; background: var(--panel-2); padding: 0.1rem 0.3rem; border-radius: 0.25rem; }
+.prose-uma hr { border: none; border-top: 1px solid var(--border); margin: 0.75rem 0; }
+.prose-uma a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }

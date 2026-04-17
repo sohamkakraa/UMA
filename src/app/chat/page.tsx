@@ -2,16 +2,18 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, FileText, Heart, Loader2, Paperclip, RotateCcw, SendHorizontal, Sparkles } from "lucide-react";
+import { AlertTriangle, BarChart2, FileText, Heart, Loader2, Paperclip, RotateCcw, SendHorizontal, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { TimePicker } from "@/components/ui/TimePicker";
 import { AppTopNav } from "@/components/nav/AppTopNav";
 import { RecordNoticeToast } from "@/components/ui/RecordNoticeToast";
 import { ChatMarkdown } from "@/components/chat/ChatMarkdown";
 import { UmaCharacter } from "@/components/chat/UmaCharacter";
 import { newHealthLogId, normalizeHealthLogs } from "@/lib/healthLogs";
 import { isMedicationFormKind } from "@/lib/medicationFormPresets";
-import { getStore, saveStore, smartMergeExtractedDoc } from "@/lib/store";
+import { getStore, saveStore, getViewingStore, saveViewingStore, getActiveFamilyMember, setActiveFamilyMember, smartMergeExtractedDoc, appendUsageLogEntry, getUsageSummary } from "@/lib/store";
+import type { FamilyMemberMeta } from "@/lib/types";
 import type {
   ChatQuickReply,
   ExtractedDoc,
@@ -87,6 +89,7 @@ export default function ChatPage() {
   });
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState("");
   const [petMood, setPetMood] = useState<"idle" | "happy" | "thinking">("idle");
   const [petName] = useState("Uma");
   const [celebrate, setCelebrate] = useState(false);
@@ -96,11 +99,15 @@ export default function ChatPage() {
   const dismissRecordNotice = useCallback(() => setRecordNotice(null), []);
   const [statusText, setStatusText] = useState<string | undefined>(undefined);
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showUsage, setShowUsage] = useState(false);
   const flashStatus = useCallback((text: string, durationMs = 3000) => {
     if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
     setStatusText(text);
     statusTimerRef.current = setTimeout(() => setStatusText(undefined), durationMs);
   }, []);
+  const [activeMember, setActiveMemberState] = useState<FamilyMemberMeta | null>(() =>
+    typeof window !== "undefined" ? getActiveFamilyMember() : null
+  );
   /** Tracks inline time-picker state per message index */
   const [pickerState, setPickerState] = useState<{ medName: string; msgIdx: number; time: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -123,6 +130,14 @@ export default function ChatPage() {
 
   useEffect(() => {
     textareaRef.current?.focus();
+    // Listen for family member switches
+    const onMemberChange = () => setActiveMemberState(getActiveFamilyMember());
+    window.addEventListener("mv-active-member-changed", onMemberChange);
+    window.addEventListener("focus", onMemberChange);
+    return () => {
+      window.removeEventListener("mv-active-member-changed", onMemberChange);
+      window.removeEventListener("focus", onMemberChange);
+    };
   }, []);
 
   // Persist chat history to localStorage whenever messages change (strip live-action state)
@@ -256,6 +271,7 @@ export default function ChatPage() {
     setMessages((m) => [...m, { role: "user", content: q || (pendingFile ? `📎 ${pendingFile.name}` : "") }]);
     setText("");
     setLoading(true);
+    setStreamingText("");
     setPetMood("thinking");
     flashStatus("Thinking…", 60_000);
 
@@ -272,6 +288,7 @@ export default function ChatPage() {
         ]);
         setLoading(false);
         setPetMood("idle");
+        setStreamingText("");
         return;
       }
       try {
@@ -281,6 +298,7 @@ export default function ChatPage() {
         setMessages((m) => [...m, { role: "assistant", content: "I couldn't read that file. Try another PDF." }]);
         setLoading(false);
         setPetMood("idle");
+        setStreamingText("");
         return;
       }
     }
@@ -291,13 +309,75 @@ export default function ChatPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           question: q || (fileSnapshot ? "Please read this PDF for my records." : ""),
-          store,
+          store: getViewingStore(),
+          activeFamilyMember: getActiveFamilyMember(),
           messages: historyPayload,
           attachments,
         }),
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error ?? "Chat failed");
+
+      if (!r.ok) {
+        const j = await r.json();
+        throw new Error(j?.error ?? "Chat failed");
+      }
+
+      const reader = r.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      const decoder = new TextDecoder();
+      let fullStreamingText = "";
+      let donePayload: any = null;
+      let chatUsage: { inputTokens: number; outputTokens: number; model: string; totalUSD: number } | null = null;
+
+      // Read SSE stream
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const jsonStr = line.slice(6);
+            if (!jsonStr.trim()) continue;
+
+            const event = JSON.parse(jsonStr);
+
+            if (event.type === "delta") {
+              fullStreamingText += event.text;
+              setStreamingText(fullStreamingText);
+            } else if (event.type === "usage") {
+              chatUsage = {
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                model: event.model,
+                totalUSD: event.totalUSD,
+              };
+            } else if (event.type === "done") {
+              donePayload = event;
+            } else if (event.type === "error") {
+              throw new Error(event.message || "SSE error");
+            }
+          }
+        }
+      }
+
+      if (!donePayload) throw new Error("No done event received");
+
+      const j = donePayload;
+
+      // Log chat usage to localStorage
+      if (chatUsage) {
+        appendUsageLogEntry({
+          kind: "chat_message",
+          model: chatUsage.model,
+          inputTokens: chatUsage.inputTokens,
+          outputTokens: chatUsage.outputTokens,
+          totalUSD: chatUsage.totalUSD,
+          label: (q || "Chat message").slice(0, 60),
+        });
+      }
 
       let assistantContent = j.answer as string;
       const patch = j.healthLogMedicationIntake as
@@ -431,6 +511,7 @@ export default function ChatPage() {
       setPetMood("idle");
     } finally {
       setLoading(false);
+      setStreamingText("");
       setTimeout(() => setPetMood("idle"), 1200);
     }
   }
@@ -471,6 +552,22 @@ export default function ChatPage() {
       <AppTopNav rightSlot={<Badge>Private</Badge>} />
 
       <main className="flex-1 min-h-0 flex flex-col px-0 sm:px-4 pb-0 sm:pb-4 pt-0 sm:pt-3 overflow-hidden">
+        {activeMember && (
+          <div className="mx-0 sm:mx-0 mb-0 sm:mb-2 flex items-center gap-2 rounded-none sm:rounded-2xl border-b sm:border border-[var(--accent)]/30 bg-[var(--accent)]/8 px-4 py-2 shrink-0">
+            <span className="text-base" aria-hidden>👤</span>
+            <p className="text-xs text-[var(--fg)] flex-1 min-w-0 truncate">
+              <span className="font-medium">{activeMember.displayName}</span>
+              <span className="text-[var(--muted)]"> · {activeMember.relation}'s profile active</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => { setActiveFamilyMember(undefined); setActiveMemberState(null); }}
+              className="text-[10px] text-[var(--accent)] hover:underline shrink-0"
+            >
+              Switch back
+            </button>
+          </div>
+        )}
         <section className="flex-1 min-h-0 rounded-none sm:rounded-3xl border-y border-[var(--border)] sm:border bg-[var(--panel)] sm:shadow-[var(--shadow)] flex flex-col overflow-hidden">
           <div className="border-b border-[var(--border)] px-4 py-3 flex items-center justify-between gap-3 shrink-0">
             <div className="flex items-center gap-3 min-w-0">
@@ -490,11 +587,60 @@ export default function ChatPage() {
                   <RotateCcw className="h-3.5 w-3.5" />
                 </button>
               )}
+              <button
+                type="button"
+                title="Usage & cost"
+                className="h-7 w-7 rounded-xl flex items-center justify-center border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/30 transition-colors"
+                onClick={() => setShowUsage((v) => !v)}
+              >
+                <BarChart2 className="h-3.5 w-3.5" />
+              </button>
               <Badge className="inline-flex items-center gap-1">
                 <Heart className="h-3 w-3" /> Health chat
               </Badge>
             </div>
           </div>
+
+          {showUsage && (() => {
+            const summary = getUsageSummary();
+            const fmtUSD = (n: number) => n < 0.01 ? "<$0.01" : `$${n.toFixed(4)}`;
+            return (
+              <div className="border-b border-[var(--border)] bg-[var(--panel)] px-4 py-3">
+                <div className="max-w-4xl mx-auto">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold text-[var(--fg)]">API Usage (prototype view)</p>
+                    <button type="button" onClick={() => setShowUsage(false)} className="text-[var(--muted)] hover:text-[var(--fg)]">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs mv-muted mb-2">
+                    <span>PDF extractions: <strong className="text-[var(--fg)]">{summary.extractionCount}</strong></span>
+                    <span>Chat messages: <strong className="text-[var(--fg)]">{summary.chatCount}</strong></span>
+                    <span>Input tokens: <strong className="text-[var(--fg)]">{summary.totalInputTokens.toLocaleString()}</strong></span>
+                    <span>Output tokens: <strong className="text-[var(--fg)]">{summary.totalOutputTokens.toLocaleString()}</strong></span>
+                    <span>Total cost: <strong className="text-[var(--accent)]">{fmtUSD(summary.totalUSD)}</strong></span>
+                  </div>
+                  {summary.entries.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--panel-2)] divide-y divide-[var(--border)]">
+                      {summary.entries.slice(0, 30).map((e) => (
+                        <div key={e.id} className="flex items-center gap-2 px-3 py-1.5 text-[10px]">
+                          <span className={`shrink-0 px-1.5 py-0.5 rounded-md font-medium ${e.kind === "pdf_extraction" ? "bg-blue-500/15 text-blue-400" : "bg-purple-500/15 text-purple-400"}`}>
+                            {e.kind === "pdf_extraction" ? "PDF" : "Chat"}
+                          </span>
+                          <span className="flex-1 truncate mv-muted">{e.label}</span>
+                          <span className="shrink-0 mv-muted">{e.inputTokens.toLocaleString()}↑ {e.outputTokens.toLocaleString()}↓</span>
+                          <span className="shrink-0 text-[var(--fg)] font-medium">{fmtUSD(e.totalUSD)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {summary.entries.length === 0 && (
+                    <p className="text-xs mv-muted">No usage recorded yet. Start chatting or upload a PDF.</p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           <div
             ref={scrollRef}
@@ -569,13 +715,12 @@ export default function ChatPage() {
                             Set daily reminder for <span className="text-[var(--accent)]">{pickerState.medName}</span>
                           </p>
                           <div className="flex items-center gap-2">
-                            <input
-                              type="time"
+                            <TimePicker
                               value={pickerState.time}
-                              onChange={(e) =>
-                                setPickerState((s) => s ? { ...s, time: e.target.value } : null)
+                              onChange={(v) =>
+                                setPickerState((s) => s ? { ...s, time: v } : null)
                               }
-                              className="flex-1 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1.5 text-sm text-[var(--fg)] outline-none focus:border-[var(--accent)]"
+                              className="flex-1"
                             />
                             <Button
                               className="h-9 px-4 shrink-0 gap-1.5 text-xs"
@@ -623,52 +768,52 @@ export default function ChatPage() {
                 </div>
                 ))}
                 {loading && (
-                <div className="flex justify-start">
-                  <div
-                    className={[
-                      "rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm",
-                      pendingFile ? "max-w-[96%] sm:max-w-[90%] space-y-3" : "mv-muted flex items-center gap-2",
-                    ].join(" ")}
-                    role={pendingFile ? "status" : undefined}
-                    aria-live={pendingFile ? "polite" : undefined}
-                  >
-                    {pendingFile ? (
-                      <>
-                        <div className="flex items-center gap-2 text-[var(--fg)]">
-                          <Loader2 className="h-4 w-4 animate-spin shrink-0 text-[var(--accent)]" aria-hidden />
-                          <span className="font-medium">Reading your PDF…</span>
-                        </div>
-                        <p className="text-xs mv-muted leading-relaxed">
-                          UMA is pulling out test results, medicines, and a short summary. Long or scanned files can take
-                          up to a minute—please keep this tab open.
-                        </p>
-                        <div className="h-1.5 w-full rounded-full bg-[var(--border)] overflow-hidden">
-                          <div
-                            className="h-full w-2/5 rounded-full bg-[var(--accent)]"
-                            style={{ animation: "umaChatExtractBar 1.8s ease-in-out infinite" }}
-                          />
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden />
-                        <span className="flex items-center gap-1.5">
-                          <span
-                            className="h-1.5 w-1.5 rounded-full bg-[var(--muted)]"
-                            style={{ animation: "typingBounce 1s infinite" }}
-                          />
-                          <span
-                            className="h-1.5 w-1.5 rounded-full bg-[var(--muted)]"
-                            style={{ animation: "typingBounce 1s infinite 140ms" }}
-                          />
-                          <span
-                            className="h-1.5 w-1.5 rounded-full bg-[var(--muted)]"
-                            style={{ animation: "typingBounce 1s infinite 280ms" }}
-                          />
-                        </span>
-                      </>
-                    )}
-                  </div>
+                <div className="flex justify-start flex-col gap-2">
+                  {pendingFile ? (
+                    <div
+                      className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm max-w-[96%] sm:max-w-[90%] space-y-3"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <div className="flex items-center gap-2 text-[var(--fg)]">
+                        <Loader2 className="h-4 w-4 animate-spin shrink-0 text-[var(--accent)]" aria-hidden />
+                        <span className="font-medium">Reading your PDF…</span>
+                      </div>
+                      <p className="text-xs mv-muted leading-relaxed">
+                        UMA is pulling out test results, medicines, and a short summary. Long or scanned files can take
+                        up to a minute—please keep this tab open.
+                      </p>
+                      <div className="h-1.5 w-full rounded-full bg-[var(--border)] overflow-hidden">
+                        <div
+                          className="h-full w-2/5 rounded-full bg-[var(--accent)]"
+                          style={{ animation: "umaChatExtractBar 1.8s ease-in-out infinite" }}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                  {streamingText ? (
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm max-w-[96%] sm:max-w-[90%]">
+                      <ChatMarkdown content={streamingText} variant="assistant" />
+                    </div>
+                  ) : !pendingFile ? (
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm mv-muted flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden />
+                      <span className="flex items-center gap-1.5">
+                        <span
+                          className="h-1.5 w-1.5 rounded-full bg-[var(--muted)]"
+                          style={{ animation: "typingBounce 1s infinite" }}
+                        />
+                        <span
+                          className="h-1.5 w-1.5 rounded-full bg-[var(--muted)]"
+                          style={{ animation: "typingBounce 1s infinite 140ms" }}
+                        />
+                        <span
+                          className="h-1.5 w-1.5 rounded-full bg-[var(--muted)]"
+                          style={{ animation: "typingBounce 1s infinite 280ms" }}
+                        />
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
                 )}
                 {messages.length <= 1 && !loading && (
@@ -717,7 +862,7 @@ export default function ChatPage() {
             </div>
           </div>
 
-          <div className="border-t border-[var(--border)] bg-[var(--panel)] p-3 sm:p-4 shrink-0">
+          <div className="border-t border-[var(--border)] bg-[var(--panel)] p-3 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0">
             <div className="mx-auto max-w-4xl">
               {pendingFile ? (
                 <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-xs">

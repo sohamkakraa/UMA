@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { getHydrationSafeStore, getStore } from "@/lib/store";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -11,7 +13,108 @@ import { AppTopNav } from "@/components/nav/AppTopNav";
 import { LabReadingTile } from "@/components/labs/LabReadingTile";
 import { downloadMarkdownFile, downloadPdfFromBase64 } from "@/lib/downloads";
 import { buildSyntheticMarkdownArtifact, parseOverviewSection } from "@/lib/markdownDoc";
+import { enrichDocFromMarkdown } from "@/lib/parseMarkdownArtifact";
+import { getCanonicalRefRange } from "@/lib/labInterpret";
+import { getLabMeta } from "@/lib/labMeta";
 import { ArrowLeft, Download } from "lucide-react";
+
+function HealthInsightsCard({ record }: { record: ReturnType<typeof getStore>["docs"][0] }) {
+  if (record.type !== "Lab report") return null;
+  if (!record.labs?.length) return null;
+
+  const abnormalLabs = record.labs
+    .map((lab) => {
+      const ref = getCanonicalRefRange(lab.name);
+      if (!ref) return null;
+      const value = parseFloat(String(lab.value).replace(/[^\d.]/g, ""));
+      if (isNaN(value)) return null;
+
+      let severity = "normal";
+      let isOutOfRange = false;
+
+      if (value < ref.low) {
+        isOutOfRange = true;
+        severity = value < ref.low * 0.5 ? "critical" : "low";
+      } else if (value > ref.high) {
+        isOutOfRange = true;
+        severity = value > ref.high * 2 ? "critical" : "high";
+      }
+
+      return { lab, value, ref, isOutOfRange, severity };
+    })
+    .filter((x) => x !== null && x.isOutOfRange) as Array<{
+      lab: typeof record.labs[0];
+      value: number;
+      ref: { low: number; high: number; unit: string };
+      isOutOfRange: boolean;
+      severity: string;
+    }>;
+
+  const inRangeCount = (record.labs?.length ?? 0) - abnormalLabs.length;
+
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="text-sm font-medium">What this means for you</h2>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {abnormalLabs.length === 0 ? (
+          <div>
+            <p className="text-sm text-[var(--fg)] mb-2">
+              Most of your results look normal. That's good news.
+            </p>
+            <p className="text-xs text-[var(--muted)]">
+              {inRangeCount} out of {record.labs?.length ?? 0} test result{inRangeCount === 1 ? " is" : "s are"} in range.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm font-semibold text-[var(--fg)]">Concerns</p>
+            {abnormalLabs.map((item, idx) => {
+              const meta = getLabMeta(item.lab.name);
+              const direction = item.severity === "low" || item.value < item.ref.low ? "low" : "high";
+              const colorClass =
+                item.severity === "critical"
+                  ? "text-red-600 bg-red-500/15"
+                  : "text-amber-600 bg-amber-500/15";
+
+              return (
+                <div
+                  key={idx}
+                  className={`rounded-lg border border-current/20 p-3 text-sm ${colorClass}`}
+                >
+                  <p className="font-semibold mb-1">
+                    {meta?.friendlyName ?? item.lab.name}{" "}
+                    {direction === "low" ? "(low)" : "(high)"}
+                  </p>
+                  {meta?.whyItMatters && (
+                    <p className="text-xs opacity-90">{meta.whyItMatters}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {abnormalLabs.some((x) => x.severity === "critical") && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 font-medium">
+            Some of these values may need attention soon. Talk to your doctor about these results.
+          </div>
+        )}
+
+        {abnormalLabs.length > 0 && abnormalLabs.every((x) => x.severity !== "critical") && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700">
+            Talk to your doctor about these results at your next visit.
+          </div>
+        )}
+
+        <p className="text-xs text-[var(--muted)] pt-2">
+          Not medical advice — always discuss with your healthcare provider.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function DocDetailClient() {
   const params = useParams();
@@ -56,7 +159,7 @@ export default function DocDetailClient() {
     );
   }
 
-  const record = doc;
+  const record = enrichDocFromMarkdown(doc, store.standardLexicon ?? []);
 
   const markdownDownloadName = `${(record.artifactSlug ?? record.id ?? "uma-record").replace(/[^\w.-]+/g, "_")}.md`;
   const pdfDownloadName = (() => {
@@ -112,30 +215,14 @@ export default function DocDetailClient() {
             </div>
           </CardHeader>
           <CardContent className="space-y-2">
-            <p className="text-sm text-[var(--fg)] leading-relaxed">{summaryLine}</p>
+            <div className="prose-uma text-sm text-[var(--fg)] leading-relaxed">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryLine}</ReactMarkdown>
+            </div>
             <p className="text-xs mv-muted">Not medical advice. Talk to your doctor about your results.</p>
           </CardContent>
         </Card>
 
-        {record.sections?.length ? (
-          <Card>
-            <CardHeader>
-              <h2 className="text-sm font-medium">Main points</h2>
-            </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-2">
-              {record.sections.map((s, i) => (
-                <div key={`${s.title}-${i}`} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
-                  <p className="text-xs font-semibold">{s.title}</p>
-                  <ul className="mt-2 text-xs mv-muted list-disc pl-4">
-                    {(s.items ?? []).map((item, idx) => (
-                      <li key={`${s.title}-${idx}`}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        ) : null}
+        <HealthInsightsCard record={record} />
 
         {record.medications?.length ? (
           <Card>

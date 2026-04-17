@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { ChatQuickReply, ExtractedDoc, PatientStore, StandardLexiconEntry } from "@/lib/types";
+import { requireUserId } from "@/lib/server/authSession";
+import { prisma } from "@/lib/prisma";
+import { parsePatientStoreJson } from "@/lib/patientStoreApi";
+import { defaultHealthLogs } from "@/lib/healthLogs";
 import { medDosePrimaryLine, medDoseSecondaryLine } from "@/lib/medicationDoseUnits";
 import { extractMedicalPdfFromBuffer } from "@/lib/server/medicalPdfPipeline";
 import {
@@ -32,9 +36,22 @@ const AttachmentSchema = z.object({
     .refine((s) => s.length < 18_000_000, "Attachment is too large for chat (max ~12 MB file)."),
 });
 
+const ActiveFamilyMemberSchema = z.object({
+  id: z.string().max(128),
+  relation: z.string().max(64),
+  displayName: z.string().max(200),
+}).nullable().optional();
+
 const BodySchema = z.object({
-  question: z.string(),
-  store: z.any(),
+  question: z.string().max(4000),
+  /**
+   * Fixed VULN-003: `store` is NO LONGER accepted from the client.
+   * The server loads the patient store from the database using the authenticated userId.
+   * The client field is ignored if sent; we keep it in the schema as z.unknown() so
+   * old clients don't get a 400, but we never use it.
+   */
+  store: z.unknown().optional(),
+  activeFamilyMember: ActiveFamilyMemberSchema,
   messages: z.array(ChatMessageSchema).max(48).optional().default([]),
   attachments: z.array(AttachmentSchema).max(2).optional().default([]),
   /** Second request after user confirms a patient-name mismatch; re-runs extraction without the name gate. */
@@ -43,12 +60,16 @@ const BodySchema = z.object({
 
 type ChatMsg = z.infer<typeof ChatMessageSchema>;
 
-function buildRetrievalContext(store: PatientStore): string {
+function buildRetrievalContext(store: PatientStore, activeFamilyMember?: { id: string; relation: string; displayName: string } | null): string {
   const p = store.profile;
+  const viewingLabel = activeFamilyMember
+    ? `You are currently helping with the health records of **${activeFamilyMember.displayName}** (${activeFamilyMember.relation} of the account holder). All data provided is for this family member, not the account holder. Make sure every response is clearly about ${activeFamilyMember.displayName}.`
+    : "You are currently helping the primary account holder.";
   const lines: string[] = [
     "You are the **conversation agent** for UMA (Ur Medical Assistant). A parallel **records agent** may extract data from PDFs the user attaches; you will see a short note about its result appended to your context after you reply is generated — for your first reply, assume extraction may be in progress and speak only from stored records plus the user's words.",
     "You are NOT a doctor. Never diagnose. Use plain language.",
     "CRITICAL: You CANNOT create reminders, set notifications, update medicines, or write to the user's records. Only the app's UI can do those things. Confirm past-tense actions ONLY when the system prompt explicitly states the app already performed them. Never claim to have 'set a reminder' or 'updated your record' on your own.",
+    viewingLabel,
     "Answer from the patient context below. If something is missing, say what is missing and still move them forward.",
     "",
     "### How to behave (proactive, not passive)",
@@ -146,13 +167,36 @@ function trimHistoryForLlm(history: ChatMsg[]): ChatMsg[] {
   return slice.slice(start);
 }
 
+type LLMResponse = {
+  text: string;
+  usage?: { inputTokens: number; outputTokens: number; model: string; totalUSD: number } | null;
+};
+
+/** Approximate pricing per million tokens for chat models. */
+const CHAT_MODEL_PRICING: Record<string, { inputPerMTok: number; outputPerMTok: number }> = {
+  "claude-opus-4-6":           { inputPerMTok: 15, outputPerMTok: 75 },
+  "claude-opus-4-5":           { inputPerMTok: 15, outputPerMTok: 75 },
+  "claude-sonnet-4-6":         { inputPerMTok: 3,  outputPerMTok: 15 },
+  "claude-sonnet-4-5-20250929":{ inputPerMTok: 3,  outputPerMTok: 15 },
+  "claude-haiku-4-5-20251001": { inputPerMTok: 1,  outputPerMTok: 5  },
+  "claude-haiku-4-5":          { inputPerMTok: 1,  outputPerMTok: 5  },
+};
+const CHAT_DEFAULT_PRICING = { inputPerMTok: 1, outputPerMTok: 5 };
+
+function computeChatCost(model: string, inputTokens: number, outputTokens: number) {
+  const key = Object.keys(CHAT_MODEL_PRICING).find((k) => model.startsWith(k)) ?? "";
+  const p = CHAT_MODEL_PRICING[key] ?? CHAT_DEFAULT_PRICING;
+  return (inputTokens / 1_000_000) * p.inputPerMTok + (outputTokens / 1_000_000) * p.outputPerMTok;
+}
+
 async function conversationAgentLLM(
   userContent: string,
   store: PatientStore,
   history: ChatMsg[],
-  diaryAugment: string
-): Promise<string> {
-  const base = buildRetrievalContext(store);
+  diaryAugment: string,
+  activeFamilyMember?: { id: string; relation: string; displayName: string } | null
+): Promise<LLMResponse> {
+  const base = buildRetrievalContext(store, activeFamilyMember);
   const systemPrompt = diaryAugment ? `${base}\n\n${diaryAugment}` : base;
 
   const trimmedHistory = trimHistoryForLlm(history);
@@ -160,22 +204,34 @@ async function conversationAgentLLM(
   if (process.env.ANTHROPIC_API_KEY) {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const chatModel = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
     const msg = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
+      model: chatModel,
       max_tokens: 900,
       system: systemPrompt,
       messages: [...trimmedHistory, { role: "user", content: userContent }],
     });
     const block = msg.content[0];
-    if (block.type === "text") return block.text;
-    throw new Error("Unexpected Claude response type");
+    if (block.type !== "text") throw new Error("Unexpected Claude response type");
+    const inputTokens = (msg.usage as { input_tokens?: number })?.input_tokens ?? 0;
+    const outputTokens = (msg.usage as { output_tokens?: number })?.output_tokens ?? 0;
+    return {
+      text: block.text,
+      usage: {
+        inputTokens,
+        outputTokens,
+        model: chatModel,
+        totalUSD: computeChatCost(chatModel, inputTokens, outputTokens),
+      },
+    };
   }
 
   if (process.env.OPENAI_API_KEY) {
     const OpenAI = (await import("openai")).default;
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const oaiModel = process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
     const completion = await client.chat.completions.create({
-      model: process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini",
+      model: oaiModel,
       max_tokens: 900,
       messages: [
         { role: "system", content: systemPrompt },
@@ -183,7 +239,90 @@ async function conversationAgentLLM(
         { role: "user", content: userContent },
       ],
     });
-    return completion.choices[0]?.message?.content ?? "I couldn't generate a response.";
+    return { text: completion.choices[0]?.message?.content ?? "I couldn't generate a response.", usage: null };
+  }
+
+  throw new Error("no_llm");
+}
+
+async function conversationAgentLLMStream(
+  userContent: string,
+  store: PatientStore,
+  history: ChatMsg[],
+  diaryAugment: string,
+  activeFamilyMember?: { id: string; relation: string; displayName: string } | null,
+  onDelta?: (text: string) => void
+): Promise<LLMResponse> {
+  const base = buildRetrievalContext(store, activeFamilyMember);
+  const systemPrompt = diaryAugment ? `${base}\n\n${diaryAugment}` : base;
+
+  const trimmedHistory = trimHistoryForLlm(history);
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const chatModel = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
+
+    let fullText = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    const stream = await client.messages.stream({
+      model: chatModel,
+      max_tokens: 900,
+      system: systemPrompt,
+      messages: [...trimmedHistory, { role: "user", content: userContent }],
+    });
+
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        fullText += event.delta.text;
+        onDelta?.(event.delta.text);
+      } else if (event.type === "message_start" && event.message.usage) {
+        inputTokens = event.message.usage.input_tokens ?? 0;
+      } else if (event.type === "message_delta" && event.usage) {
+        outputTokens = event.usage.output_tokens ?? 0;
+      }
+    }
+
+    return {
+      text: fullText,
+      usage: {
+        inputTokens,
+        outputTokens,
+        model: chatModel,
+        totalUSD: computeChatCost(chatModel, inputTokens, outputTokens),
+      },
+    };
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    const OpenAI = (await import("openai")).default;
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const oaiModel = process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
+
+    let fullText = "";
+
+    const stream = await client.chat.completions.create({
+      model: oaiModel,
+      max_tokens: 900,
+      stream: true,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...trimmedHistory.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: userContent },
+      ],
+    });
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        fullText += delta;
+        onDelta?.(delta);
+      }
+    }
+
+    return { text: fullText, usage: null };
   }
 
   throw new Error("no_llm");
@@ -253,9 +392,52 @@ function userAskedToMergeRecords(question: string): boolean {
 }
 
 export async function POST(req: Request) {
+  // Fixed VULN-002: require authentication before processing any chat request.
+  // Without this, any unauthenticated client can drive the Anthropic LLM at the server's cost.
+  const userId = await requireUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  }
+
   try {
     const body = BodySchema.parse(await req.json());
-    const store = body.store as PatientStore;
+
+    // Fixed VULN-003: load the patient store from the database using the authenticated userId.
+    // We no longer trust the `store` field the client sends — a malicious client could craft
+    // a store with adversarial markdown artifacts that manipulate the LLM system prompt.
+    //
+    // Fallback: if the user hasn't synced to the server yet (localStorage-only), the DB row
+    // won't exist. In that case we return a graceful prompt asking them to sync first.
+    let store: PatientStore;
+    const dbRecord = await prisma.patientRecord.findUnique({ where: { userId } });
+    if (dbRecord?.data) {
+      const parsed = parsePatientStoreJson(dbRecord.data);
+      if (!parsed) {
+        return NextResponse.json(
+          { error: "Could not read your health records from the server. Try reloading the app." },
+          { status: 500 },
+        );
+      }
+      store = parsed;
+    } else {
+      // No server-side record yet — user has only used localStorage.
+      // Build a minimal empty store so the chat can still respond helpfully.
+      store = {
+        docs: [],
+        meds: [],
+        labs: [],
+        healthLogs: defaultHealthLogs(),
+        profile: {
+          name: "",
+          allergies: [],
+          conditions: [],
+          trends: [],
+        },
+        preferences: { theme: "system" },
+        updatedAtISO: new Date().toISOString(),
+      } satisfies PatientStore;
+    }
+
     const question = body.question.trim();
     const history = body.messages ?? [];
     const attachments = body.attachments ?? [];
@@ -319,85 +501,153 @@ export async function POST(req: Request) {
           ]
         : undefined;
 
-    const recordsPromise =
-      pdfAttachment && process.env.ANTHROPIC_API_KEY
-        ? extractMedicalPdfFromBuffer({
-            buffer: Buffer.from(pdfAttachment.dataBase64, "base64"),
-            fileName: pdfAttachment.fileName,
-            patientName: store.profile?.name?.trim() ?? "",
-            typeHint: "",
-            clientLexicon: store.standardLexicon ?? [],
-            existingContentHashes: existingHashes,
-            skipPatientNameCheck: body.skipPatientNameCheck === true,
-          })
-        : Promise.resolve(null as Awaited<ReturnType<typeof extractMedicalPdfFromBuffer>> | null);
+    // Set up SSE response
+    const encoder = new TextEncoder();
+    let responseController: any = null;
 
-    const conversationPromise = (async () => {
+    const stream = new ReadableStream({
+      start(controller: any) {
+        responseController = controller;
+      },
+    });
+
+    const response = new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    });
+
+    // Start streaming in the background
+    (async () => {
       try {
-        return await conversationAgentLLM(userContent, store, history, diaryAugment);
-      } catch (e: unknown) {
-        if (e instanceof Error && e.message === "no_llm") {
-          return answerFromStore(question || userContent, store);
+        // Stream conversation agent with deltas
+        let conversationAnswerText = "";
+        let chatUsage: { inputTokens: number; outputTokens: number; model: string; totalUSD: number } | null = null;
+
+        try {
+          const convAnswer = await conversationAgentLLMStream(
+            userContent,
+            store,
+            history,
+            diaryAugment,
+            body.activeFamilyMember ?? null,
+            (deltaText: string) => {
+              // Send delta events as they arrive
+              if (responseController) {
+                const event = `data: ${JSON.stringify({ type: "delta", text: deltaText })}\n\n`;
+                responseController.enqueue(encoder.encode(event));
+              }
+            }
+          );
+          conversationAnswerText = convAnswer.text;
+          chatUsage = convAnswer.usage || null;
+        } catch (e: unknown) {
+          if (e instanceof Error && e.message === "no_llm") {
+            conversationAnswerText = answerFromStore(question || userContent, store);
+          } else {
+            conversationAnswerText =
+              "I had trouble reaching the AI service. Here's something from your saved records:\n\n" +
+              answerFromStore(question || userContent, store);
+          }
         }
-        return (
-          "I had trouble reaching the AI service. Here's something from your saved records:\n\n" +
-          answerFromStore(question || userContent, store)
-        );
+
+        // Send usage event
+        if (chatUsage && responseController) {
+          const usageEvent = `data: ${JSON.stringify({
+            type: "usage",
+            inputTokens: chatUsage.inputTokens,
+            outputTokens: chatUsage.outputTokens,
+            model: chatUsage.model,
+            totalUSD: chatUsage.totalUSD,
+          })}\n\n`;
+          responseController.enqueue(encoder.encode(usageEvent));
+        }
+
+        // Run records agent in parallel (it was already streaming in the background)
+        const recordsPromise =
+          pdfAttachment && process.env.ANTHROPIC_API_KEY
+            ? extractMedicalPdfFromBuffer({
+                buffer: Buffer.from(pdfAttachment.dataBase64, "base64"),
+                fileName: pdfAttachment.fileName,
+                patientName: store.profile?.name?.trim() ?? "",
+                typeHint: "",
+                clientLexicon: store.standardLexicon ?? [],
+                existingContentHashes: existingHashes,
+                skipPatientNameCheck: body.skipPatientNameCheck === true,
+              })
+            : Promise.resolve(null as Awaited<ReturnType<typeof extractMedicalPdfFromBuffer>> | null);
+
+        const recordsResult = await recordsPromise;
+
+        let finalAnswer = conversationAnswerText;
+        let mergeProposal:
+          | {
+              doc: ExtractedDoc;
+              lexiconPatches: StandardLexiconEntry[];
+              nameMismatch?: { namesOnDocument: string[]; profileDisplayName: string };
+            }
+          | undefined;
+
+        if (recordsResult) {
+          if (recordsResult.ok) {
+            finalAnswer += `\n\n---\n**Records agent (parallel):** I extracted **${pdfAttachment?.fileName ?? "your PDF"}** — ${recordsResult.doc.summary}`;
+            mergeProposal = {
+              doc: recordsResult.doc,
+              lexiconPatches: recordsResult.lexiconPatches,
+            };
+            const hinted = userAskedToMergeRecords(question);
+            finalAnswer += hinted
+              ? `\n\nI'll add this to your records when you confirm below.`
+              : `\n\nTap **Add to records** below to save this to your dashboard, charts, and document list.`;
+          } else if (recordsResult.code === "patient_name_mismatch" && recordsResult.doc) {
+            finalAnswer += `\n\n---\n**Records agent (parallel):** ${recordsResult.message}`;
+            finalAnswer += `\n\nReview the summary card below. If you still want this file in your records, tap **Add to records** and confirm.`;
+            mergeProposal = {
+              doc: recordsResult.doc,
+              lexiconPatches: recordsResult.lexiconPatches ?? [],
+              nameMismatch: {
+                namesOnDocument: recordsResult.namesOnDocument ?? [],
+                profileDisplayName: recordsResult.profileDisplayName ?? "",
+              },
+            };
+          } else {
+            finalAnswer += `\n\n---\n**Records agent (parallel):** I could not add this file (${recordsResult.code}). ${recordsResult.message}`;
+          }
+        }
+
+        // Send final done event with complete answer and all side effects
+        if (responseController) {
+          const doneEvent = `data: ${JSON.stringify({
+            type: "done",
+            answer: finalAnswer,
+            mergeProposal,
+            healthLogMedicationIntake: medicationIntakePatch,
+            medicationAddProposal: medicationAddPatch,
+            medicationUpdateProposal: medicationUpdatePatch,
+            quickReplies,
+            chatUsage: chatUsage ?? null,
+            recordsAgent: recordsResult
+              ? recordsResult.ok
+                ? { status: "ok" as const, title: recordsResult.doc.title }
+                : { status: "error" as const, code: recordsResult.code, message: recordsResult.message }
+              : { status: "skipped" as const },
+          })}\n\n`;
+          responseController.enqueue(encoder.encode(doneEvent));
+          responseController.close();
+        }
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : "Unknown error";
+        if (responseController) {
+          const errorEvent = `data: ${JSON.stringify({ type: "error", message })}\n\n`;
+          responseController.enqueue(encoder.encode(errorEvent));
+          responseController.close();
+        }
       }
     })();
 
-    const [recordsResult, convAnswer] = await Promise.all([recordsPromise, conversationPromise]);
-
-    let answer = convAnswer;
-    let mergeProposal:
-      | {
-          doc: ExtractedDoc;
-          lexiconPatches: StandardLexiconEntry[];
-          nameMismatch?: { namesOnDocument: string[]; profileDisplayName: string };
-        }
-      | undefined;
-
-    if (recordsResult) {
-      if (recordsResult.ok) {
-        answer += `\n\n---\n**Records agent (parallel):** I extracted **${pdfAttachment?.fileName ?? "your PDF"}** — ${recordsResult.doc.summary}`;
-        mergeProposal = {
-          doc: recordsResult.doc,
-          lexiconPatches: recordsResult.lexiconPatches,
-        };
-        const hinted = userAskedToMergeRecords(question);
-        answer += hinted
-          ? `\n\nI'll add this to your records when you confirm below.`
-          : `\n\nTap **Add to records** below to save this to your dashboard, charts, and document list.`;
-      } else if (recordsResult.code === "patient_name_mismatch" && recordsResult.doc) {
-        answer += `\n\n---\n**Records agent (parallel):** ${recordsResult.message}`;
-        answer += `\n\nReview the summary card below. If you still want this file in your records, tap **Add to records** and confirm.`;
-        mergeProposal = {
-          doc: recordsResult.doc,
-          lexiconPatches: recordsResult.lexiconPatches ?? [],
-          nameMismatch: {
-            namesOnDocument: recordsResult.namesOnDocument ?? [],
-            profileDisplayName: recordsResult.profileDisplayName ?? "",
-          },
-        };
-      } else {
-        answer += `\n\n---\n**Records agent (parallel):** I could not add this file (${recordsResult.code}). ${recordsResult.message}`;
-      }
-    }
-
-    return NextResponse.json({
-      ok: true,
-      answer,
-      mergeProposal,
-      healthLogMedicationIntake: medicationIntakePatch,
-      medicationAddProposal: medicationAddPatch,
-      medicationUpdateProposal: medicationUpdatePatch,
-      quickReplies,
-      recordsAgent: recordsResult
-        ? recordsResult.ok
-          ? { status: "ok" as const, title: recordsResult.doc.title }
-          : { status: "error" as const, code: recordsResult.code, message: recordsResult.message }
-        : { status: "skipped" as const },
-    });
+    return response;
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Chat error";
     return NextResponse.json({ error: message }, { status: 400 });

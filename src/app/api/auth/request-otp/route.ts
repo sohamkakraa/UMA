@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { setOtpDb } from "@/lib/auth/otpDb";
-import { checkOtpRateLimit } from "@/lib/auth/otpRateLimit";
+import { checkRateLimitDb } from "@/lib/auth/otpRateLimitDb";
 import { normalizeLoginIdentifier } from "@/lib/auth/identifiers";
 import {
   getBetaDemoConfig,
@@ -21,10 +21,23 @@ const bodySchema = z.object({
   phoneCountryCode: z.string().max(8).optional(),
 });
 
+/**
+ * Fixed VULN-010: prefer x-real-ip (set by Vercel's edge to the true client IP)
+ * over x-forwarded-for, which can be spoofed by clients to bypass rate limiting.
+ * On Vercel, x-real-ip is always the actual client IP and cannot be forged.
+ */
 function clientIp(req: Request): string {
+  // x-real-ip is set by Vercel/nginx to the true client IP — not user-spoofable
+  const realIp = req.headers.get("x-real-ip");
+  if (realIp?.trim()) return realIp.trim();
+  // Fallback: use the LAST (rightmost) value in x-forwarded-for, which is set
+  // by the trusted proxy, not the client
   const xf = req.headers.get("x-forwarded-for");
-  if (xf) return xf.split(",")[0]!.trim() || "unknown";
-  return req.headers.get("x-real-ip") ?? "unknown";
+  if (xf) {
+    const parts = xf.split(",").map((s) => s.trim()).filter(Boolean);
+    return parts[parts.length - 1] ?? "unknown";
+  }
+  return "unknown";
 }
 
 function devReturnAllowed(): boolean {
@@ -41,7 +54,8 @@ export async function POST(req: Request) {
   }
   const { identifier, phoneCountryCode } = parsed.data;
   const ip = clientIp(req);
-  if (!checkOtpRateLimit(`otp:${ip}`)) {
+  // VULN-007 fix: use DB-backed rate limiter (8 OTP requests per hour per IP)
+  if (!(await checkRateLimitDb(`otp-req:${ip}`, 8, 60 * 60 * 1000))) {
     return NextResponse.json({ ok: false, error: "Too many requests. Try again later." }, { status: 429 });
   }
 

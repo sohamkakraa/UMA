@@ -3,7 +3,7 @@ import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/sessionToken";
 
 const PROTECTED_PREFIXES = ["/dashboard", "/chat", "/body", "/docs", "/upload", "/profile", "/onboarding"];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   if (!isProtected) return NextResponse.next();

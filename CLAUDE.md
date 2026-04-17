@@ -51,8 +51,8 @@ Chat design principles:
 - **Components**: Custom component library in `src/components/ui/` (Button, Card, Badge, Input)
 - **Charts**: Recharts (AreaChart for lab trends)
 - **Icons**: Lucide React
-- **PDF ingestion**: Anthropic Messages API with a `document` content block (base64 PDF); no local PDF text library for the LLM path
-- **AI extraction**: Anthropic API via `@anthropic-ai/sdk` — PDF `document` block with **citations enabled**, free-form reply: small **`uma-meta` JSON fence** (metadata + patient names) plus **`markdownArtifact`** body (no API JSON Schema — avoids Anthropic union-type limits)
+- **PDF ingestion**: Two-stage pipeline — **LlamaParse** (free tier, 10k credits/month, 3 credits/page) extracts raw markdown via OCR; **Claude Haiku** structures the text. Falls back to Claude full PDF (`document` block) when LlamaParse credits are exhausted or `LLAMA_CLOUD_API_KEY` is absent.
+- **AI extraction**: Anthropic API via `@anthropic-ai/sdk` — either text structuring (post-LlamaParse, cheaper) or PDF `document` block with **citations enabled**. Both paths use a free-form reply: small **`uma-meta` JSON fence** (metadata + patient names) plus **`markdownArtifact`** body (no API JSON Schema — avoids Anthropic union-type limits)
 - **State / storage**: `localStorage` via `src/lib/store.ts` (`mv_patient_store_v1` key); no backend DB yet
 - **Runtime**: Next.js API routes (`/api/extract`, `/api/chat`) running on Node.js
 
@@ -118,7 +118,7 @@ PatientStore {
 
 - **Store merge logic** (`store.ts → mergeExtractedDoc`): new docs prepend; meds dedupe by lowercase name (latest wins); labs append and dedupe by `name|date|value|unit` key; allergies/conditions union-merge into profile.
 - **Lab normalisation** (`standardized.ts`): canonical names like HbA1c, LDL, HDL, TSH, etc. are enforced so chart lookups and markdown tables stay consistent.
-- **LLM extraction** (`extract/route.ts` → `medicalPdfPipeline.ts`): requires `ANTHROPIC_API_KEY`. PDFs use a base64 **`document`** block with **`citations: { enabled: true }`** and **`messages.create`**. The model returns `uma-meta` JSON + markdown; then **`parseMarkdownArtifact.ts`** fills `doc.labs`, `medications`, `allergies`, `conditions`, `sections`, `doctors`, `facilityName` from pipe tables and bullet sections. **`mergeExtractedDoc`** runs **`enrichDocFromMarkdown`** again after lexicon patches so client-side merges stay in sync. Run **`npm test`** (Vitest) for parser coverage.
+- **LLM extraction** (`extract/route.ts` → `medicalPdfPipeline.ts`): requires `ANTHROPIC_API_KEY`. Two-stage when `LLAMA_CLOUD_API_KEY` is set: LlamaParse OCR → Claude Haiku text structuring. Falls back to Claude full PDF (`document` block, citations enabled) on 402/error. Both paths produce `uma-meta` JSON + markdown; then **`parseMarkdownArtifact.ts`** fills `doc.labs`, `medications`, `allergies`, `conditions`, `sections`, `doctors`, `facilityName` from pipe tables and bullet sections. **`mergeExtractedDoc`** runs **`enrichDocFromMarkdown`** again after lexicon patches so client-side merges stay in sync. `ExtractionCost` records tokens, USD, model, `extractorSource` ("llamaparse" | "claude_pdf"), and `llamaParseCredits`. Run **`npm test`** (Vitest) for parser coverage.
 - **Chat route** (`api/chat/route.ts`): uses Claude when `ANTHROPIC_API_KEY` is set (store as system context), else OpenAI if `OPENAI_API_KEY` is set, else keyword fallback. Attaching a PDF in chat runs the same extraction pipeline in parallel when `ANTHROPIC_API_KEY` is set.
 - **Theme**: CSS custom properties (`--accent`, `--bg`, `--panel`, `--border`, `--fg`, `--muted`, etc.) are set by `ThemeInit` on the `<html>` element. Always use these variables, never hardcode colours.
 - **No server-side persistence yet**: everything is `localStorage`. Future work will add a backend with proper auth and hospital API connectors.
@@ -131,7 +131,9 @@ PatientStore {
 |---|---|
 | `ANTHROPIC_API_KEY` | Required for PDF upload extraction and for chat when using Claude. |
 | `ANTHROPIC_MODEL` | Chat model (default: `claude-haiku-4-5-20251001`). |
-| `ANTHROPIC_PDF_MODEL` | PDF extraction model (default: `claude-sonnet-4-5-20250929`). |
+| `ANTHROPIC_PDF_MODEL` | PDF extraction model used when Claude does full PDF vision (default: `claude-sonnet-4-5-20250929`). |
+| `ANTHROPIC_STRUCTURE_MODEL` | Claude model used to structure LlamaParse text output (default: `claude-haiku-4-5-20251001`). Falls back to `ANTHROPIC_MODEL`. |
+| `LLAMA_CLOUD_API_KEY` | Optional. When set, LlamaParse is used as primary PDF extractor (10k free credits/month, 3 credits/page). Falls back to Claude full PDF on HTTP 402 or errors. |
 | `OPENAI_API_KEY` | Optional chat fallback if Anthropic is not configured. |
 | `OPENAI_CHAT_MODEL` | OpenAI chat model when using the fallback (default: `gpt-4o-mini`). |
 

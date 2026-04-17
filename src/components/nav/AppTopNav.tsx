@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, UserRound } from "lucide-react";
 import { cn } from "@/components/ui/cn";
 import { UmaLogo } from "@/components/branding/UmaLogo";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { FamilySwitcher } from "@/components/family/FamilySwitcher";
+import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 
 type NavItem = {
   href: string;
@@ -30,16 +32,21 @@ export function AppTopNav({
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const navRef = useRef<HTMLDivElement | null>(null);
-  const activeIndex = useMemo(
-    () => Math.max(0, NAV_ITEMS.findIndex((item) => pathname === item.href)),
-    [pathname]
-  );
+  const activeIndex = useMemo(() => {
+    const exact = NAV_ITEMS.findIndex((item) => pathname === item.href);
+    if (exact !== -1) return exact;
+    const prefix = NAV_ITEMS.findIndex(
+      (item) => item.href !== "/" && pathname.startsWith(item.href + "/"),
+    );
+    return prefix !== -1 ? prefix : -1;
+  }, [pathname]);
 
   function onNavKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
     e.preventDefault();
+    const base = activeIndex >= 0 ? activeIndex : 0;
     const delta = e.key === "ArrowRight" ? 1 : -1;
-    const next = (activeIndex + delta + NAV_ITEMS.length) % NAV_ITEMS.length;
+    const next = (base + delta + NAV_ITEMS.length) % NAV_ITEMS.length;
     router.push(NAV_ITEMS[next].href);
   }
 
@@ -50,31 +57,35 @@ export function AppTopNav({
         fixed ? "fixed inset-x-0 top-0" : "sticky top-0"
       )}
     >
-      <div className="mx-auto max-w-6xl px-4 h-14 flex items-center gap-2 sm:gap-3">
-        <Link href="/dashboard" className="shrink-0">
-          <UmaLogo compact className="sm:hidden" />
-          <UmaLogo className="hidden sm:inline-flex" />
-        </Link>
+      <div className="mx-auto grid h-14 w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 sm:gap-3">
+        <div className="flex min-w-0 items-center justify-start">
+          <Link href="/dashboard" className="shrink-0">
+            <UmaLogo compact className="sm:hidden" />
+            <UmaLogo className="hidden sm:inline-flex" />
+          </Link>
+        </div>
 
-        <div className="flex-1 flex justify-center min-w-0">
+        <div className="flex min-w-0 justify-center">
           <div
             ref={navRef}
             role="tablist"
             tabIndex={0}
             onKeyDown={onNavKeyDown}
-            className="relative inline-flex rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-1 min-w-[220px] sm:min-w-[300px]"
+            className="relative grid w-full max-w-[300px] sm:max-w-[340px] rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-1"
+            style={{ gridTemplateColumns: `repeat(${NAV_ITEMS.length}, 1fr)` }}
           >
-            <span
-              className="pointer-events-none absolute top-1 bottom-1 rounded-xl bg-[var(--panel)] shadow-sm transition-[left,width] duration-300 ease-out"
-              style={{
-                /* p-1 = 4px padding; segment width = inner track / n (not 100%/n − 8px, which shrinks each tab wrongly) */
-                left: `calc(4px + ${activeIndex} * (100% - 8px) / ${NAV_ITEMS.length})`,
-                width: `calc((100% - 8px) / ${NAV_ITEMS.length})`,
-              }}
-              aria-hidden
-            />
-            {NAV_ITEMS.map((item) => {
-              const active = pathname === item.href;
+            {activeIndex >= 0 && (
+              <span
+                className="pointer-events-none absolute inset-y-1 rounded-xl bg-[var(--panel)] shadow-sm transition-[left,width] duration-300 ease-out"
+                style={{
+                  left: `calc(4px + ${activeIndex} * ((100% - 8px) / ${NAV_ITEMS.length}))`,
+                  width: `calc((100% - 8px) / ${NAV_ITEMS.length})`,
+                }}
+                aria-hidden
+              />
+            )}
+            {NAV_ITEMS.map((item, idx) => {
+              const active = idx === activeIndex;
               return (
                 <Link
                   key={item.href}
@@ -82,9 +93,9 @@ export function AppTopNav({
                   role="tab"
                   aria-selected={active}
                   className={cn(
-                    "relative z-10 min-w-0 rounded-xl px-2 sm:px-3 py-1.5 text-xs sm:text-sm transition text-center flex-1",
+                    "relative z-10 rounded-xl px-2 py-1.5 text-xs sm:px-3 sm:text-sm transition text-center",
                     active
-                      ? "text-[var(--fg)]"
+                      ? "font-semibold text-[var(--fg)]"
                       : "text-[var(--muted)] hover:text-[var(--fg)]"
                   )}
                 >
@@ -95,26 +106,40 @@ export function AppTopNav({
           </div>
         </div>
 
-        <div className="hidden sm:flex min-w-[180px] items-center justify-end gap-2">
-          <ThemeToggle />
-          {rightSlot}
+        <div className="flex min-w-0 items-center justify-end gap-2">
+          <div className="hidden sm:flex items-center justify-end gap-2">
+            <FamilySwitcher />
+            <NotificationCenter />
+            <ThemeToggle />
+            {rightSlot}
+          </div>
+          <button
+            type="button"
+            onClick={() => setMobileOpen((v) => !v)}
+            className="sm:hidden h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] text-[var(--fg)] grid place-items-center"
+            aria-label="Toggle mobile actions"
+          >
+            <ChevronDown className={cn("h-4 w-4 transition-transform", mobileOpen && "rotate-180")} />
+          </button>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setMobileOpen((v) => !v)}
-          className="sm:hidden h-8 w-8 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] text-[var(--fg)] grid place-items-center"
-          aria-label="Toggle mobile actions"
-        >
-          <ChevronDown className={cn("h-4 w-4 transition-transform", mobileOpen && "rotate-180")} />
-        </button>
       </div>
 
       {mobileOpen && (
         <div className="sm:hidden border-t border-[var(--border)] px-4 py-2 bg-[var(--panel)]/95">
-          <div className="flex items-center justify-end gap-2">
-            <ThemeToggle />
-            {rightSlot}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Link
+              href="/profile"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1.5 text-xs font-medium text-[var(--fg)] hover:bg-[var(--panel)]"
+            >
+              <UserRound className="h-4 w-4 text-[var(--accent)]" aria-hidden />
+              Profile
+            </Link>
+            <div className="flex items-center gap-2">
+              <FamilySwitcher />
+              <NotificationCenter />
+              <ThemeToggle />
+              {rightSlot}
+            </div>
           </div>
         </div>
       )}

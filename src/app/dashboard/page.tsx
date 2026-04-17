@@ -7,15 +7,21 @@ import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
+import { DatePicker } from "@/components/ui/DatePicker";
+import { TimePicker } from "@/components/ui/TimePicker";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/Select";
 import { AppTopNav } from "@/components/nav/AppTopNav";
 import { DashboardHealthLogSection } from "@/components/health/DashboardHealthLogSection";
 import { HealthTrendsSection } from "@/components/labs/HealthTrendsSection";
 import { LabReadingTile } from "@/components/labs/LabReadingTile";
 import { RecordNoticeToast } from "@/components/ui/RecordNoticeToast";
-import { getHydrationSafeStore, getStore, saveStore, removeDoc, smartMergeExtractedDoc } from "@/lib/store";
+import { Footer } from "@/components/ui/Footer";
+import { getHydrationSafeStore, getStore, saveStore, getHydrationSafeViewingStore, getViewingStore, saveViewingStore, getActiveFamilyMember, setActiveFamilyMember, removeDoc, smartMergeExtractedDoc, rebuildLabsAndMedsFromDocuments, pushNotification } from "@/lib/store";
 import { useGlobalUpload } from "@/lib/uploadContext";
 import {
   DocType,
+  ExtractionCost,
   ExtractedDoc,
   ExtractedLab,
   ExtractedMedication,
@@ -56,25 +62,37 @@ import { displaySummaryForDoc, stripInlineMarkdownForDisplay } from "@/lib/markd
 import { labMatchesTrendMetric, resolveCanonicalLabName } from "@/lib/standardized";
 import { normalizeLabUnitString } from "@/lib/labUnits";
 import { summarizeMenstrualCycle } from "@/lib/menstrualCycle";
+import { LAB_META, getLabMeta } from "@/lib/labMeta";
+import {
+  doctorNamesFromDocs,
+  facilityNamesFromDocs,
+  mergeDoctorQuickPick,
+  mergeFacilityQuickPick,
+  normPickKey,
+} from "@/lib/providerQuickPick";
+import { getCanonicalRefRange, interpretLab } from "@/lib/labInterpret";
 import {
   Activity,
   AlertTriangle,
   Bell,
-  Calendar,
   ClipboardList,
   Info,
   FileText,
   FileUp,
-  HeartPulse,
   Loader2,
   Pill,
   Plus,
-  RotateCw,
   Trash2,
   User,
   X,
   Droplets,
+  Stethoscope,
+  ShieldAlert,
+  CircleDot,
+  ArrowUpRight,
+  CheckCircle2,
 } from "lucide-react";
+import { Combobox } from "@/components/ui/Combobox";
 
 function pf(s?: string | null): string {
   return stripInlineMarkdownForDisplay(s ?? "");
@@ -115,7 +133,7 @@ function toSixMonthSeries(points: Array<{ date: string; value: number | null }>)
       return distCurr < distBest ? curr : best;
     }, withDate[0]);
     series.push({
-      date: cursor.toLocaleDateString(undefined, { month: "short", year: "2-digit" }),
+      date: `${cursor.toLocaleDateString("en-US", { month: "short" })} ${cursor.getFullYear()}`,
       value: nearest.value,
     });
   }
@@ -227,10 +245,10 @@ function nextDoseWindow(frequency?: string, usualTimeLocalHHmm?: string) {
 }
 
 type OverlayKind = "reports" | "meds" | "labs" | "add-med" | "add-report" | "upload-report" | null;
-const UPLOAD_TYPES: DocType[] = ["Lab report", "Prescription", "Bill", "Imaging", "Other"];
 
 export default function DashboardPage() {
-  const [store, setStore] = useState(() => getHydrationSafeStore());
+  const [store, setStore] = useState(() => getHydrationSafeViewingStore());
+  const [activeMember, setActiveMemberState] = useState(() => typeof window !== "undefined" ? getActiveFamilyMember() : null);
   const [printing, setPrinting] = useState(false);
   const [overlay, setOverlay] = useState<OverlayKind>(null);
   const [activeMedInfo, setActiveMedInfo] = useState<string | null>(null);
@@ -238,19 +256,26 @@ export default function DashboardPage() {
   const printFallbackTimerRef = useRef<number | null>(null);
   const globalUpload = useGlobalUpload();
 
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadType, setUploadType] = useState<DocType>("Lab report");
+  // File queue is stored in the global context so it survives navigation.
+  // Local state is only kept for backward compat with file-picker UI.
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const uploadFile = globalUpload.currentFile ?? uploadFiles[0] ?? null;
+  const uploadFileIndex = globalUpload.queueIndex;
   // uploadLoading now mirrors the global context phase so navigation doesn't cancel the fetch
   const uploadLoading = globalUpload.phase === "extracting";
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPreview, setUploadPreview] = useState<ExtractedDoc | null>(null);
   const [uploadLexiconPatches, setUploadLexiconPatches] = useState<StandardLexiconEntry[]>([]);
+  const [uploadExtractionCost, setUploadExtractionCost] = useState<ExtractionCost | null>(null);
   const [uploadNameMismatch, setUploadNameMismatch] = useState<{
     namesOnDocument: string[];
     profileDisplayName: string;
   } | null>(null);
   const [recordNotice, setRecordNotice] = useState<string | null>(null);
   const dismissRecordNotice = useCallback(() => setRecordNotice(null), []);
+  /** Shown when a background extraction fails and the user returns to the dashboard. */
+  const [uploadFailNotice, setUploadFailNotice] = useState<string | null>(null);
+  const dismissUploadFailNotice = useCallback(() => setUploadFailNotice(null), []);
   const [newMed, setNewMed] = useState<ExtractedMedication>({
     name: "",
     dose: "",
@@ -285,6 +310,24 @@ export default function DashboardPage() {
   const [panelRemOnceWhen, setPanelRemOnceWhen] = useState("");
   const [panelRemNotes, setPanelRemNotes] = useState("");
   const [panelRemHint, setPanelRemHint] = useState<string | null>(null);
+  // Family tree is now in the FamilySwitcher dropdown
+  const [labFilter, setLabFilter] = useState<"flagged" | "all">("flagged");
+  const [showApptReminderPanel, setShowApptReminderPanel] = useState(false);
+  // Reminder presets in minutes before appointment
+  const APPT_REMINDER_PRESETS = [
+    { minutesBefore: 60 * 24, label: "1 day before" },
+    { minutesBefore: 60 * 2, label: "2 hours before" },
+    { minutesBefore: 60, label: "1 hour before" },
+    { minutesBefore: 30, label: "30 minutes before" },
+    { minutesBefore: 15, label: "15 minutes before" },
+  ];
+  const [pinnedTrendMetrics, setPinnedTrendMetrics] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem("uma_pinned_trends_v1");
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
 
   const [printPortalEl, setPrintPortalEl] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -359,19 +402,30 @@ export default function DashboardPage() {
   }, [activeMedInfo, store.meds]);
 
   useEffect(() => {
-    setStore(getStore());
-    const onFocus = () => setStore(getStore());
-    window.addEventListener("focus", onFocus);
+    function loadActiveStore() {
+      const s = getViewingStore();
+      if (s.docs.length > 0) {
+        rebuildLabsAndMedsFromDocuments(s);
+        saveViewingStore(s);
+      }
+      setStore(s);
+      setActiveMemberState(getActiveFamilyMember());
+    }
+    loadActiveStore();
+    const onFocus = () => loadActiveStore();
     const onStorage = (e: StorageEvent) => {
-      if (e.key === "mv_patient_store_v1") setStore(getStore());
+      if (e.key?.startsWith("mv_patient_store")) loadActiveStore();
     };
-    const onCustom = () => setStore(getStore());
+    const onCustom = () => loadActiveStore();
+    window.addEventListener("focus", onFocus);
     window.addEventListener("storage", onStorage);
     window.addEventListener("mv-store-update", onCustom as EventListener);
+    window.addEventListener("mv-active-member-changed", onCustom as EventListener);
     return () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("mv-store-update", onCustom as EventListener);
+      window.removeEventListener("mv-active-member-changed", onCustom as EventListener);
     };
   }, []);
 
@@ -386,17 +440,22 @@ export default function DashboardPage() {
   // When a background extraction finishes (user may have navigated away and returned),
   // promote the result into the local preview state so the review card appears.
   useEffect(() => {
-    if (globalUpload.phase === "ready" && globalUpload.result && !uploadPreview) {
+    if (globalUpload.phase === "ready" && globalUpload.result) {
       setUploadPreview(globalUpload.result.doc);
       setUploadLexiconPatches(globalUpload.result.lexiconPatches);
+      setUploadExtractionCost(globalUpload.result.extractionCost ?? null);
       setUploadNameMismatch(globalUpload.result.nameMismatch ?? null);
       setUploadError(null);
+      setUploadFailNotice(null);
+      setOverlay("upload-report");
       setRecordNotice("Your PDF is ready. Check the summary below, then tap Add to records.");
     }
     if (globalUpload.phase === "error" && globalUpload.error) {
+      // Show error both inside the upload modal (if open) and as a persistent toast on the dashboard
       setUploadError(globalUpload.error);
+      setUploadFailNotice(`File upload failed: ${globalUpload.error}`);
     }
-  }, [globalUpload.phase, globalUpload.result, globalUpload.error, uploadPreview]);
+  }, [globalUpload.phase, globalUpload.result, globalUpload.error]);
 
   useEffect(() => {
     const clearPrintFallback = () => {
@@ -419,7 +478,7 @@ export default function DashboardPage() {
 
   function updateStore(next: typeof store) {
     setStore(next);
-    saveStore(next);
+    saveViewingStore(next);
   }
 
   function updateMed(index: number, patch: Partial<ExtractedMedication>) {
@@ -693,36 +752,44 @@ export default function DashboardPage() {
   }
 
   function discardUploadPreview() {
-    setUploadFile(null);
+    setUploadFiles([]);
     setUploadPreview(null);
     setUploadLexiconPatches([]);
+    setUploadExtractionCost(null);
     setUploadNameMismatch(null);
     setUploadError(null);
     globalUpload.clear();
   }
 
   function extractUploadDoc() {
-    if (!uploadFile) return;
+    const file = uploadFiles[0] ?? uploadFile;
+    if (!file) return;
     setUploadError(null);
     setUploadPreview(null);
     setUploadLexiconPatches([]);
+    setUploadExtractionCost(null);
     setUploadNameMismatch(null);
-    // Hand off to the layout-level context so the fetch survives navigation
+    // Hand off to the layout-level context so the fetch survives navigation.
+    // Pass the full queue so context can track progress across navigations.
     globalUpload.startExtract({
-      file: uploadFile,
-      typeHint: uploadType,
+      file,
+      typeHint: "",
       patientName: store.profile.name?.trim() ?? "",
       existingContentHashes: store.docs.map((d) => d.contentHash).filter(Boolean) as string[],
       standardLexicon: store.standardLexicon ?? [],
+      allFiles: uploadFiles.length > 0 ? uploadFiles : [file],
+      allFilesIndex: 0,
     });
   }
 
   async function commitUploadDoc() {
     if (!uploadPreview) return;
     let doc: ExtractedDoc = uploadPreview;
-    if (uploadFile) {
+    // Use the file reference from the global context — it survives navigation
+    const fileForBase64 = globalUpload.currentFile ?? uploadFile;
+    if (fileForBase64) {
       try {
-        const originalPdfBase64 = await readFileAsBase64(uploadFile);
+        const originalPdfBase64 = await readFileAsBase64(fileForBase64);
         doc = { ...uploadPreview, originalPdfBase64 };
       } catch {
         doc = uploadPreview;
@@ -732,14 +799,37 @@ export default function DashboardPage() {
       standardLexiconPatches: uploadLexiconPatches,
     });
     setStore(result.store);
-    setUploadFile(null);
-    setUploadPreview(null);
-    setUploadLexiconPatches([]);
-    setUploadNameMismatch(null);
-    setUploadError(null);
-    setOverlay(null);
+
+    // Check if there are more files to upload (use global queue which survives navigation)
+    const queue = globalUpload.queuedFiles.length > 0 ? globalUpload.queuedFiles : uploadFiles;
+    const nextIndex = uploadFileIndex + 1;
+    if (nextIndex < queue.length) {
+      setUploadPreview(null);
+      setUploadError(null);
+      setUploadLexiconPatches([]);
+      setUploadExtractionCost(null);
+      setUploadNameMismatch(null);
+      // Auto-start extraction of next file
+      globalUpload.startExtract({
+        file: queue[nextIndex],
+        typeHint: "",
+        patientName: result.store.profile.name?.trim() ?? "",
+        existingContentHashes: result.store.docs.map((d) => d.contentHash).filter(Boolean) as string[],
+        standardLexicon: result.store.standardLexicon ?? [],
+        allFiles: queue,
+        allFilesIndex: nextIndex,
+      });
+    } else {
+      // All files processed
+      setUploadFiles([]);
+      setUploadPreview(null);
+      setUploadLexiconPatches([]);
+      setUploadNameMismatch(null);
+      setUploadError(null);
+      setOverlay(null);
+      globalUpload.clear();
+    }
     setRecordNotice(result.message);
-    globalUpload.clear();
   }
 
   function printVisitSummary() {
@@ -779,32 +869,37 @@ export default function DashboardPage() {
     setTimeout(() => medNameInputRef.current?.focus(), 60);
   }
 
+  function handlePinToggle(name: string) {
+    setPinnedTrendMetrics(prev => {
+      const next = prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name];
+      if (typeof window !== "undefined") {
+        localStorage.setItem("uma_pinned_trends_v1", JSON.stringify(next));
+      }
+      return next;
+    });
+  }
+
   const lex = store.standardLexicon;
-  const hba1c = useMemo(() => toChartPoints(store.labs, "HbA1c", lex), [store.labs, lex]);
-  const ldl = useMemo(() => toChartPoints(store.labs, "LDL", lex), [store.labs, lex]);
   const trendMap: Record<string, Array<{ date: string; value: number | null }>> = useMemo(
-    () => ({
-      HbA1c: hba1c,
-      LDL: ldl,
-      HDL: toChartPoints(store.labs, "HDL", lex),
-      Triglycerides: toChartPoints(store.labs, "Triglycerides", lex),
-      Glucose: toChartPoints(store.labs, "Glucose", lex),
-      RBC: toChartPoints(store.labs, "RBC", lex),
-      WBC: toChartPoints(store.labs, "WBC", lex),
-      Hemoglobin: toChartPoints(store.labs, "Hemoglobin", lex),
-      Platelets: toChartPoints(store.labs, "Platelets", lex),
-      Creatinine: toChartPoints(store.labs, "Creatinine", lex),
-    }),
-    [hba1c, ldl, store.labs, lex]
+    () => {
+      const map: Record<string, Array<{ date: string; value: number | null }>> = {};
+      Object.keys(LAB_META).forEach((canonicalName) => {
+        map[canonicalName] = toChartPoints(store.labs, canonicalName, lex);
+      });
+      return map;
+    },
+    [store.labs, lex]
   );
-  const selectedTrends = (store.profile.trends ?? ["HbA1c", "LDL"]).slice(0, 6);
-  const trendCards = selectedTrends
-    .map((name) => ({
-      name,
-      raw: trendMap[name] ?? [],
-    }))
-    .filter((x) => x.raw.length > 0)
-    .map((x) => ({ ...x, data: toSixMonthSeries(x.raw) }));
+  const trendCards = useMemo(
+    () =>
+      Object.entries(trendMap)
+        .map(([name, raw]) => ({
+          name,
+          raw,
+        }))
+        .filter((x) => x.raw.length > 0),
+    [trendMap]
+  );
 
   const recentLabs = useMemo(() => {
     return store.labs
@@ -812,6 +907,13 @@ export default function DashboardPage() {
       .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))
       .slice(0, 30);
   }, [store.labs]);
+
+  const flaggedLabs = useMemo(() => {
+    return recentLabs.filter(l => {
+      const it = interpretLab(l, lex);
+      return it.flag === "low" || it.flag === "high";
+    });
+  }, [recentLabs, lex]);
 
   const visitPrintLabs = useMemo(
     () =>
@@ -859,21 +961,22 @@ export default function DashboardPage() {
     const flowDates = mc?.flowLogDates ?? [];
     const recentFlow =
       flowDates.length > 0
-        ? ` Recent period-flow days: ${flowDates
-            .slice()
-            .sort()
-            .reverse()
-            .slice(0, 6)
-            .join(", ")}${flowDates.length > 6 ? "…" : ""}.`
+        ? ` Recent flow days: ${flowDates.slice().sort().reverse().slice(0, 6).join(", ")}${flowDates.length > 6 ? "…" : ""}.`
         : "";
-    const phase = s.phaseLabel ? ` Rough phase guess (not medical): ${s.phaseLabel}.` : "";
-    const len = mc?.typicalCycleLengthDays
-      ? ` Typical cycle length you entered: ${mc.typicalCycleLengthDays} days.`
+    const phase = s.phaseLabel ? ` Phase: ${s.phaseLabel}.` : "";
+    const fertile = s.inFertileWindow
+      ? " Currently in your fertile window."
+      : s.daysUntilFertileWindow !== undefined
+      ? ` Fertile window opens in ${s.daysUntilFertileWindow} day${s.daysUntilFertileWindow === 1 ? "" : "s"}.`
       : "";
-    const last = mc?.lastPeriodStartISO?.trim()
-      ? ` Last period start you entered: ${mc.lastPeriodStartISO}.`
+    const ov = s.ovulationDateISO
+      ? s.daysUntilOvulation === 0
+        ? " Estimated ovulation today."
+        : s.daysUntilOvulation !== undefined && s.daysUntilOvulation > 0
+        ? ` Estimated ovulation in ${s.daysUntilOvulation} day${s.daysUntilOvulation === 1 ? "" : "s"}.`
+        : ""
       : "";
-    return `${s.headline}. ${s.detail}.${phase}${len}${last}${recentFlow} These are rough guesses, not medical advice. Tap Profile to edit.`;
+    return `${s.headline}. ${s.detail}.${phase}${fertile}${ov}${recentFlow} Estimates only, not medical advice. Tap Profile to edit.`;
   }, [store.profile.menstrualCycle, cycleSummary]);
 
   const conditionBadgeTitle = useMemo(() => {
@@ -895,19 +998,282 @@ export default function DashboardPage() {
     return `${n} saved file${n === 1 ? "" : "s"}. Opens your newest files on the home screen.`;
   }, [store.docs.length]);
 
-  const dobBadgeTitle = useMemo(() => {
-    const d = store.profile.dob?.trim();
-    return d
-      ? `Birth date on file: ${d}. Tap Profile to edit.`
-      : "Birth date not set. Tap Profile to add it.";
-  }, [store.profile.dob]);
+  const doctorNameSuggestions = useMemo(
+    () => mergeDoctorQuickPick(store.profile, doctorNamesFromDocs(store.docs)),
+    [
+      store.docs,
+      store.profile.primaryCareProvider,
+      store.profile.doctorQuickPick,
+      store.profile.doctorQuickPickHidden,
+    ],
+  );
+
+  const facilityNameSuggestions = useMemo(
+    () => mergeFacilityQuickPick(store.profile, facilityNamesFromDocs(store.docs)),
+    [
+      store.docs,
+      store.profile.nextVisitHospital,
+      store.profile.facilityQuickPick,
+      store.profile.facilityQuickPickHidden,
+    ],
+  );
+
+  function removeDoctorSuggestion(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setStore((prev) => {
+      const qp = prev.profile.doctorQuickPick ?? [];
+      const inCustom = qp.some((x) => normPickKey(x) === normPickKey(trimmed));
+      const profile = { ...prev.profile };
+      if (inCustom) {
+        profile.doctorQuickPick = qp.filter((x) => normPickKey(x) !== normPickKey(trimmed));
+      } else {
+        const hidden = new Set([...(profile.doctorQuickPickHidden ?? [])]);
+        hidden.add(normPickKey(trimmed));
+        profile.doctorQuickPickHidden = [...hidden];
+      }
+      const next = { ...prev, profile };
+      saveViewingStore(next);
+      return next;
+    });
+  }
+
+  function appendDoctorQuickPick(name: string) {
+    const t = name.trim();
+    if (!t) return;
+    setStore((prev) => {
+      const qp = [...(prev.profile.doctorQuickPick ?? [])];
+      if (qp.some((x) => normPickKey(x) === normPickKey(t))) return prev;
+      qp.push(t);
+      const next = { ...prev, profile: { ...prev.profile, doctorQuickPick: qp } };
+      saveViewingStore(next);
+      return next;
+    });
+  }
+
+  function renameDoctorSuggestion(from: string, to: string) {
+    const f = from.trim();
+    const t = to.trim();
+    if (!f || !t || normPickKey(f) === normPickKey(t)) return;
+    setStore((prev) => {
+      const profile = { ...prev.profile };
+      const qp = [...(profile.doctorQuickPick ?? [])];
+      const idx = qp.findIndex((x) => normPickKey(x) === normPickKey(f));
+      if (idx >= 0) {
+        qp[idx] = t;
+        profile.doctorQuickPick = qp;
+      } else {
+        const hidden = new Set([...(profile.doctorQuickPickHidden ?? [])]);
+        hidden.add(normPickKey(f));
+        profile.doctorQuickPickHidden = [...hidden];
+        if (!qp.some((x) => normPickKey(x) === normPickKey(t))) qp.push(t);
+        profile.doctorQuickPick = qp;
+      }
+      if (normPickKey(prev.profile.primaryCareProvider ?? "") === normPickKey(f)) {
+        profile.primaryCareProvider = t;
+      }
+      const next = { ...prev, profile };
+      saveViewingStore(next);
+      return next;
+    });
+  }
+
+  function removeFacilitySuggestion(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setStore((prev) => {
+      const qp = prev.profile.facilityQuickPick ?? [];
+      const inCustom = qp.some((x) => normPickKey(x) === normPickKey(trimmed));
+      const profile = { ...prev.profile };
+      if (inCustom) {
+        profile.facilityQuickPick = qp.filter((x) => normPickKey(x) !== normPickKey(trimmed));
+      } else {
+        const hidden = new Set([...(profile.facilityQuickPickHidden ?? [])]);
+        hidden.add(normPickKey(trimmed));
+        profile.facilityQuickPickHidden = [...hidden];
+      }
+      const next = { ...prev, profile };
+      saveViewingStore(next);
+      return next;
+    });
+  }
+
+  function appendFacilityQuickPick(name: string) {
+    const t = name.trim();
+    if (!t) return;
+    setStore((prev) => {
+      const qp = [...(prev.profile.facilityQuickPick ?? [])];
+      if (qp.some((x) => normPickKey(x) === normPickKey(t))) return prev;
+      qp.push(t);
+      const next = { ...prev, profile: { ...prev.profile, facilityQuickPick: qp } };
+      saveViewingStore(next);
+      return next;
+    });
+  }
+
+  function renameFacilitySuggestion(from: string, to: string) {
+    const f = from.trim();
+    const t = to.trim();
+    if (!f || !t || normPickKey(f) === normPickKey(t)) return;
+    setStore((prev) => {
+      const profile = { ...prev.profile };
+      const qp = [...(profile.facilityQuickPick ?? [])];
+      const idx = qp.findIndex((x) => normPickKey(x) === normPickKey(f));
+      if (idx >= 0) {
+        qp[idx] = t;
+        profile.facilityQuickPick = qp;
+      } else {
+        const hidden = new Set([...(profile.facilityQuickPickHidden ?? [])]);
+        hidden.add(normPickKey(f));
+        profile.facilityQuickPickHidden = [...hidden];
+        if (!qp.some((x) => normPickKey(x) === normPickKey(t))) qp.push(t);
+        profile.facilityQuickPick = qp;
+      }
+      if (normPickKey(prev.profile.nextVisitHospital ?? "") === normPickKey(f)) {
+        profile.nextVisitHospital = t;
+      }
+      const next = { ...prev, profile };
+      saveViewingStore(next);
+      return next;
+    });
+  }
+
+  const healthSnapshot = useMemo(() => {
+    if (!store.labs.length) return null;
+
+    // Get latest value per canonical metric name
+    const latestByName: Record<string, { value: number; date: string; unit?: string }> = {};
+    [...store.labs]
+      .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
+      .forEach(l => {
+        const val = parseFloat(String(l.value).replace(/[^\d.]/g, ""));
+        if (!isNaN(val) && l.date) {
+          latestByName[resolveCanonicalLabName(l.name, lex)] = { value: val, date: l.date, unit: l.unit };
+        }
+      });
+
+    const concerns: Array<{ name: string; value: number; unit?: string; status: "critical" | "warning"; direction: "high" | "low"; friendlyName: string; why?: string }> = [];
+    const improving: Array<{ name: string; friendlyName: string; direction: "improving" | "worsening" }> = [];
+
+    Object.entries(latestByName).forEach(([name, { value }]) => {
+      const ref = getCanonicalRefRange(name);
+      if (!ref) return;
+      const norm = (value - ref.low) / (ref.high - ref.low);
+      const meta = getLabMeta(name);
+      if (norm < -0.1 || norm > 1.1) {
+        const direction = norm < 0 ? "low" : "high";
+        const severity = norm < -0.5 || norm > 1.5 ? "critical" : "warning";
+        concerns.push({
+          name, value, unit: ref.unit, status: severity, direction,
+          friendlyName: meta?.friendlyName ?? name,
+          why: meta?.whyItMatters
+        });
+      }
+    });
+
+    // Detect trends
+    const byName: Record<string, Array<{ value: number; date: string }>> = {};
+    store.labs.forEach(l => {
+      const val = parseFloat(String(l.value).replace(/[^\d.]/g, ""));
+      if (!isNaN(val) && l.date) {
+        const cn = resolveCanonicalLabName(l.name, lex);
+        (byName[cn] ??= []).push({ value: val, date: l.date });
+      }
+    });
+    Object.entries(byName).forEach(([name, pts]) => {
+      if (pts.length < 2) return;
+      const sorted = pts.sort((a,b) => a.date.localeCompare(b.date));
+      const oldest = sorted[0].value, latest = sorted[sorted.length-1].value;
+      if (oldest === 0) return;
+      const ref = getCanonicalRefRange(name);
+      if (!ref) return;
+      const changePct = (latest - oldest) / oldest;
+      const meta = getLabMeta(name);
+      const latestNorm = (latest - ref.low) / (ref.high - ref.low);
+      const oldestNorm = (oldest - ref.low) / (ref.high - ref.low);
+      // Improving = was out of range, now closer to normal
+      const wasAbnormal = oldestNorm < -0.1 || oldestNorm > 1.1;
+      const isNowBetter = Math.abs(latestNorm - 0.5) < Math.abs(oldestNorm - 0.5);
+      if (wasAbnormal && isNowBetter && Math.abs(changePct) > 0.1) {
+        improving.push({ name, friendlyName: meta?.friendlyName ?? name, direction: "improving" });
+      }
+    });
+
+    concerns.sort((a,b) => (b.status === "critical" ? 1 : 0) - (a.status === "critical" ? 1 : 0));
+
+    return { concerns: concerns.slice(0, 6), improving: improving.slice(0, 3), total: Object.keys(latestByName).length };
+  }, [store.labs, lex]);
+
+  /** Plain-English health narrative synthesising all available data. */
+  const healthNarrative = useMemo(() => {
+    const name = store.profile.name?.split(" ")[0] || null;
+    const dob = store.profile.dob;
+    const age = dob ? (() => {
+      const diff = Date.now() - new Date(dob).getTime();
+      return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
+    })() : null;
+    const conditions = store.profile.conditions ?? [];
+    const activeMeds = store.meds.filter(m => !m.endDate || m.endDate >= new Date().toISOString().slice(0, 10));
+    const hasDocs = store.docs.length > 0;
+    const hasLabs = store.labs.length > 0;
+
+    // Nothing useful yet
+    if (!hasDocs && conditions.length === 0 && activeMeds.length === 0) return null;
+
+    const parts: string[] = [];
+
+    // Age only (name is already shown in the title)
+    if (age && age > 0 && age < 120) {
+      parts.push(`${age} year${age === 1 ? "" : "s"} old.`);
+    }
+
+    // Conditions
+    if (conditions.length > 0) {
+      const shown = conditions.slice(0, 3).join(", ");
+      const extra = conditions.length > 3 ? ` and ${conditions.length - 3} more` : "";
+      parts.push(`Managing ${shown}${extra}.`);
+    }
+
+    // Active medications
+    if (activeMeds.length > 0) {
+      const medNames = activeMeds.slice(0, 3).map(m => m.name).join(", ");
+      const extra = activeMeds.length > 3 ? ` (+${activeMeds.length - 3} more)` : "";
+      parts.push(`On ${activeMeds.length} active medication${activeMeds.length === 1 ? "" : "s"}: ${medNames}${extra}.`);
+    }
+
+    // Lab highlights (only if we have labs)
+    if (hasLabs && healthSnapshot) {
+      const critical = healthSnapshot.concerns.filter(c => c.status === "critical");
+      const warnings = healthSnapshot.concerns.filter(c => c.status === "warning");
+      const improving = healthSnapshot.improving;
+
+      if (critical.length > 0) {
+        const names = critical.map(c => c.friendlyName).join(", ");
+        parts.push(`${names} ${critical.length === 1 ? "is" : "are"} significantly outside normal range — worth discussing with your doctor.`);
+      } else if (warnings.length > 0) {
+        const names = warnings.slice(0, 2).map(c => c.friendlyName).join(" and ");
+        parts.push(`${names} ${warnings.length === 1 ? "is" : "are"} slightly off — worth keeping an eye on.`);
+      } else {
+        parts.push("All tracked lab values are within normal range.");
+      }
+
+      if (improving.length > 0) {
+        const names = improving.map(i => i.friendlyName).join(", ");
+        parts.push(`${names} ${improving.length === 1 ? "is" : "are"} trending in the right direction.`);
+      }
+    }
+
+    if (parts.length === 0) return null;
+    return parts.join(" ");
+  }, [store.profile, store.meds, store.docs.length, store.labs.length, healthSnapshot]);
+
 
   const inlineDocs = recentDocs.slice(0, 4);
   const inlineMeds = recentMeds.slice(0, 4);
   const inlineLabs = recentLabs.slice(0, 9);
 
   return (
-    <div className="min-h-screen pb-24">
+    <div className="flex min-h-full flex-col">
       <style>{`
         @keyframes umaExtractBar {
           0% { transform: translateX(-100%); opacity: 0.85; }
@@ -923,166 +1289,269 @@ export default function DashboardPage() {
           border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
         }
       `}</style>
-      <AppTopNav
-        rightSlot={
-          <Button className="h-9 gap-2" onClick={() => setOverlay("upload-report")}>
-            <FileUp className="h-4 w-4" /> Upload a file
-          </Button>
-        }
-      />
+      <AppTopNav />
 
-      <main className="mx-auto max-w-6xl px-4 py-8 space-y-6 no-print">
+      <main className="mx-auto w-full max-w-6xl flex-1 space-y-6 px-4 py-8 pb-12 no-print">
+        {activeMember && (
+          <div className="flex items-center gap-3 rounded-2xl border border-[var(--accent)]/30 bg-[var(--accent)]/8 px-4 py-3">
+            <span className="text-xl" aria-hidden>👤</span>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-[var(--fg)]">
+                Viewing {activeMember.displayName}&apos;s profile
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {activeMember.relation.charAt(0).toUpperCase() + activeMember.relation.slice(1)} · All data shown and saved belongs to this family member only
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setActiveFamilyMember(undefined); setActiveMemberState(null); }}
+              className="ml-auto text-xs text-[var(--accent)] hover:underline shrink-0"
+            >
+              Switch back
+            </button>
+          </div>
+        )}
         <section className="mv-card rounded-3xl p-6 mv-surface">
-          <div className="grid gap-5 lg:grid-cols-[1.6fr_1fr]">
-            <div>
+          <div className="grid min-w-0 gap-5 lg:grid-cols-[1.6fr_1fr]">
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.16em] mv-muted">At a glance</p>
               <h2 className="mt-2 text-3xl font-semibold mv-title">{store.profile.name || "You"}</h2>
-              <p className="mt-2 text-sm mv-muted max-w-xl">
-                Your newest files, medicines, and main test trends in one place—handy before you see your doctor.
+              <p className="mt-2 text-sm mv-muted max-w-xl leading-relaxed">
+                {healthNarrative ?? "Upload a health report to get your personalised health summary."}
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
-                <Badge
-                  as="button"
+                <button
                   type="button"
-                  className="snapshot-badge"
-                  title={dobBadgeTitle}
-                  aria-label={dobBadgeTitle}
-                  onClick={() => {
-                    window.location.href = "/profile#profile-patient-details";
-                  }}
-                >
-                  <Calendar className="mr-1 h-3 w-3" />
-                  Birth date: {store.profile.dob || "Not set"}
-                </Badge>
-                <Badge
-                  as="button"
-                  type="button"
-                  className="snapshot-badge"
                   title={conditionBadgeTitle}
                   aria-label={conditionBadgeTitle}
-                  onClick={() => {
-                    window.location.href = "/profile#profile-conditions";
-                  }}
+                  onClick={() => { window.location.href = "/profile#profile-conditions"; }}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-xs font-medium text-[var(--fg)] hover:border-[var(--accent)]/50 hover:bg-[var(--accent)]/8 transition-all snapshot-badge"
                 >
-                  {store.profile.conditions.length} health issues
-                </Badge>
-                <Badge
-                  as="button"
+                  <Stethoscope className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+                  <span>{store.profile.conditions.length > 0 ? store.profile.conditions.slice(0,2).join(", ") + (store.profile.conditions.length > 2 ? ` +${store.profile.conditions.length-2} more` : "") : "No conditions"}</span>
+                </button>
+                <button
                   type="button"
-                  className="snapshot-badge"
                   title={allergyBadgeTitle}
                   aria-label={allergyBadgeTitle}
-                  onClick={() => {
-                    window.location.href = "/profile#profile-allergies";
-                  }}
+                  onClick={() => { window.location.href = "/profile#profile-allergies"; }}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-xs font-medium text-[var(--fg)] hover:border-[var(--accent)]/50 hover:bg-[var(--accent)]/8 transition-all snapshot-badge"
                 >
-                  {store.profile.allergies.length} allergy notes
-                </Badge>
-                <Badge
-                  as="button"
-                  type="button"
-                  className="snapshot-badge"
-                  title={docBadgeTitle}
-                  aria-label={docBadgeTitle}
-                  onClick={() => {
-                    window.location.href = "/dashboard#dashboard-latest-reports";
-                  }}
-                >
-                  {store.docs.length} saved files
-                </Badge>
-                {store.profile.menstrualCycle?.lastPeriodStartISO ||
-                (store.profile.menstrualCycle?.flowLogDates?.length ?? 0) > 0 ? (
-                  <span className="inline-block max-w-[min(100%,20rem)]">
-                    <Badge
-                      as="button"
-                      type="button"
-                      className="snapshot-badge max-w-full min-w-0 truncate"
-                      title={cycleBadgeTitle}
-                      aria-label={cycleBadgeTitle}
-                      onClick={() => {
-                        window.location.href = "/profile#profile-cycle-tracking";
-                      }}
-                    >
-                      <Droplets className="mr-1 h-3 w-3 shrink-0" />
-                      <span className="min-w-0 truncate">
-                        {cycleSummary.headline} · {cycleSummary.detail}
-                      </span>
-                    </Badge>
-                  </span>
+                  <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <span>{store.profile.allergies.length > 0 ? store.profile.allergies.slice(0,2).join(", ") + (store.profile.allergies.length > 2 ? ` +${store.profile.allergies.length-2}` : "") : "No allergies"}</span>
+                </button>
+                {store.profile.sex === "Female" &&
+                (store.profile.menstrualCycle?.lastPeriodStartISO ||
+                (store.profile.menstrualCycle?.flowLogDates?.length ?? 0) > 0) ? (
+                  <button
+                    type="button"
+                    title={cycleBadgeTitle}
+                    aria-label={cycleBadgeTitle}
+                    onClick={() => { window.location.href = "/profile#profile-cycle-tracking"; }}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-xs font-medium text-[var(--fg)] hover:border-[var(--accent)]/50 hover:bg-[var(--accent)]/8 transition-all snapshot-badge max-w-[16rem] truncate"
+                  >
+                    <Droplets className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{cycleSummary.headline} · {cycleSummary.detail}</span>
+                  </button>
                 ) : null}
+                <button
+                  type="button"
+                  onClick={() => { window.location.href = "/profile"; }}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-[var(--accent)]/40 bg-[var(--accent)]/8 px-3 py-2 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/15 transition-all snapshot-badge"
+                >
+                  <User className="h-3.5 w-3.5" />
+                  <span>Edit profile</span>
+                </button>
               </div>
+              {healthSnapshot && (healthSnapshot.concerns.length > 0 || healthSnapshot.improving.length > 0) && (
+                <div className="mt-5 space-y-3 pt-1">
+                  {healthSnapshot.concerns.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        {healthSnapshot.concerns.map((c, i) => (
+                          <div key={i} className={[
+                            "inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-medium",
+                            c.status === "critical"
+                              ? "bg-rose-500/12 text-rose-600 border border-rose-500/25"
+                              : "bg-amber-500/12 text-amber-600 border border-amber-500/25"
+                          ].join(" ")}>
+                            {c.status === "critical" ? <CircleDot className="h-3 w-3 text-rose-500 shrink-0" /> : <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />}
+                            <span>{c.friendlyName}</span>
+                            <span className="opacity-70">{c.direction === "high" ? "↑ high" : "↓ low"}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Concern badges are self-explanatory — no extra warning needed */}
+                    </div>
+                  )}
+                  {healthSnapshot.improving.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-[var(--fg)]">Improving</p>
+                      <div className="flex flex-wrap gap-2">
+                        {healthSnapshot.improving.map((item, i) => (
+                          <div key={i} className="inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-medium bg-emerald-500/12 text-emerald-600 border border-emerald-500/25">
+                            <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+                            <span>{item.friendlyName}</span>
+                            <span className="opacity-70"><ArrowUpRight className="inline h-3 w-3" /> trending better</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <span className="text-[10px] text-[var(--muted)] italic">Based on your latest results · Not medical advice</span>
+                </div>
+              )}
             </div>
-            <Card className="rounded-2xl">
-              <CardContent className="space-y-3">
-                <p className="text-xs uppercase tracking-[0.14em] mv-muted">Coming up</p>
-                <div className="flex items-start gap-2">
-                  <HeartPulse className="h-4 w-4 mt-1 text-[var(--accent)]" />
-                  <div>
-                    <p className="text-sm font-medium">Regular doctor</p>
-                    <p className="text-sm mv-muted">{store.profile.primaryCareProvider || "Not added yet"}</p>
+            <Card className="min-w-0 rounded-2xl">
+              <CardContent className="min-w-0 space-y-3">
+                <p className="text-xs uppercase tracking-[0.14em] mv-muted">Next appointment</p>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-3">
+                  <div className="min-w-0">
+                    <p className="mb-1 text-xs font-medium mv-muted">Doctor</p>
+                    <Combobox
+                      className="w-full min-w-0"
+                      value={store.profile.primaryCareProvider || ""}
+                      onChange={(v) => {
+                        const updated = { ...store };
+                        updated.profile.primaryCareProvider = v.trim() || undefined;
+                        saveViewingStore(updated);
+                        setStore({ ...updated });
+                      }}
+                      suggestions={doctorNameSuggestions}
+                      placeholder="Doctor"
+                      onRemoveSuggestion={removeDoctorSuggestion}
+                      onRenameSuggestion={renameDoctorSuggestion}
+                      onAppendCustom={appendDoctorQuickPick}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="mb-1 text-xs font-medium mv-muted">Hospital / Clinic</p>
+                    <Combobox
+                      className="w-full min-w-0"
+                      value={store.profile.nextVisitHospital || ""}
+                      onChange={(v) => {
+                        const updated = { ...store };
+                        updated.profile.nextVisitHospital = v.trim() || undefined;
+                        saveViewingStore(updated);
+                        setStore({ ...updated });
+                      }}
+                      suggestions={facilityNameSuggestions}
+                      placeholder="Clinic"
+                      onRemoveSuggestion={removeFacilitySuggestion}
+                      onRenameSuggestion={renameFacilitySuggestion}
+                      onAppendCustom={appendFacilityQuickPick}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="mb-1 text-xs font-medium mv-muted">Date</p>
+                    <DatePicker
+                      value={store.profile.nextVisitDate || ""}
+                      onChange={(v) => {
+                        const updated = { ...store };
+                        updated.profile.nextVisitDate = v;
+                        saveViewingStore(updated);
+                        setStore({ ...updated });
+                      }}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="mb-1 text-xs font-medium mv-muted">Time</p>
+                    <TimePicker
+                      value={store.profile.nextVisitTime || ""}
+                      onChange={(v) => {
+                        const updated = { ...store };
+                        updated.profile.nextVisitTime = v || undefined;
+                        saveViewingStore(updated);
+                        setStore({ ...updated });
+                      }}
+                    />
                   </div>
                 </div>
-                <div className="flex items-start gap-2">
-                  <Calendar className="h-4 w-4 mt-1 text-[var(--accent-2)]" />
+                {/* Reminder toggle */}
+                {store.profile.nextVisitDate && (
                   <div>
-                    <p className="text-sm font-medium">Next visit</p>
-                    <p className="text-sm mv-muted">{store.profile.nextVisitDate || "No visit date yet"}</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowApptReminderPanel(v => !v)}
+                      className="flex items-center gap-2 text-xs text-[var(--accent)] hover:underline"
+                    >
+                      <Bell className="h-3.5 w-3.5" />
+                      {(store.profile.appointmentReminders?.length ?? 0) > 0
+                        ? `${store.profile.appointmentReminders!.length} reminder${store.profile.appointmentReminders!.length === 1 ? "" : "s"} set`
+                        : "Set reminders"}
+                    </button>
+                    {showApptReminderPanel && (
+                      <div className="mt-2 space-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
+                        <p className="text-xs font-medium text-[var(--fg)]">Remind me:</p>
+                        <div className="space-y-1">
+                          {APPT_REMINDER_PRESETS.map(preset => {
+                            const active = (store.profile.appointmentReminders ?? []).some(r => r.minutesBefore === preset.minutesBefore);
+                            return (
+                              <button
+                                key={preset.minutesBefore}
+                                type="button"
+                                onClick={() => {
+                                  const current = store.profile.appointmentReminders ?? [];
+                                  const updated = { ...store };
+                                  if (active) {
+                                    updated.profile.appointmentReminders = current.filter(r => r.minutesBefore !== preset.minutesBefore);
+                                  } else {
+                                    updated.profile.appointmentReminders = [...current, { minutesBefore: preset.minutesBefore, label: preset.label }]
+                                      .sort((a, b) => b.minutesBefore - a.minutesBefore);
+                                  }
+                                  saveViewingStore(updated);
+                                  setStore({ ...updated });
+                                }}
+                                className={[
+                                  "w-full flex items-center justify-between rounded-lg px-3 py-1.5 text-xs transition-colors",
+                                  active
+                                    ? "bg-[var(--accent)]/12 text-[var(--accent)] border border-[var(--accent)]/30"
+                                    : "text-[var(--fg)] hover:bg-[var(--panel)] border border-transparent"
+                                ].join(" ")}
+                              >
+                                <span>{preset.label}</span>
+                                {active && <span className="text-[var(--accent)]">✓</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[10px] text-[var(--muted)] pt-1">
+                          Browser notifications appear while UMA is open. Allow notifications when prompted.
+                        </p>
+                      </div>
+                    )}
                   </div>
-                </div>
-                <Button variant="ghost" className="w-full gap-2" onClick={() => (window.location.href = "/profile")}>
-                  <User className="h-4 w-4" /> Edit profile
+                )}
+                <Button
+                  type="button"
+                  onClick={printVisitSummary}
+                  className="w-full gap-2"
+                  disabled={printing}
+                  title="In the print dialog, choose Save as PDF for a file. If the preview looks empty, wait for the page to finish loading and try again."
+                >
+                  <ClipboardList className="h-4 w-4" />
+                  {printing ? "Opening print…" : "Export visit summary"}
                 </Button>
               </CardContent>
             </Card>
           </div>
         </section>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardContent className="py-4">
-              <p className="text-xs uppercase tracking-[0.1em] mv-muted">Medicines</p>
-              <p className="mt-2 text-2xl font-semibold">{store.meds.length}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="py-4">
-              <p className="text-xs uppercase tracking-[0.1em] mv-muted">Test results</p>
-              <p className="mt-2 text-2xl font-semibold">{store.labs.length}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="py-4">
-              <p className="text-xs uppercase tracking-[0.1em] mv-muted">Last updated</p>
-              <p className="mt-2 text-sm font-medium">{new Date(store.updatedAtISO).toLocaleDateString()}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="py-4">
-              <Button
-                type="button"
-                onClick={printVisitSummary}
-                className="w-full gap-2"
-                disabled={printing}
-                title="In the print dialog, choose Save as PDF for a file. If the preview looks empty, wait for the page to finish loading and try again."
-              >
-                <ClipboardList className="h-4 w-4" />
-                {printing ? "Opening print…" : "Print or save as PDF"}
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
         <div className="grid gap-4 lg:grid-cols-2">
           <Card id="dashboard-latest-reports" className="scroll-mt-24">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-[var(--accent-2)]" />
-                  <h3 className="text-sm font-semibold">Newest files</h3>
+                <div className="flex items-center gap-2 min-w-0">
+                  <FileText className="h-4 w-4 shrink-0 text-[var(--accent-2)]" />
+                  <h3 className="text-sm font-semibold">Upload documents</h3>
                 </div>
-                <Button variant="ghost" className="h-8 px-3" onClick={() => setOverlay("add-report")}>
-                  Add new
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Badge>{store.docs.length}</Badge>
+                  <Button variant="ghost" className="h-8 px-3" onClick={() => setOverlay("add-report")}>
+                    Add new
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -1137,12 +1606,6 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <Badge>{store.meds.length}</Badge>
-                  <Link
-                    href="#health-logs"
-                    className="text-xs font-medium text-[var(--accent)] underline-offset-2 hover:underline"
-                  >
-                    Health journal
-                  </Link>
                   <Button variant="ghost" className="h-8 px-3" onClick={focusAddMedication}>
                     Add new
                   </Button>
@@ -1159,7 +1622,6 @@ export default function DashboardPage() {
                     const remaining = estimateRemainingStock(m);
                     const isOpen = activeMedInfo === String(i);
                     const doseLine = medDosePrimaryLine(m);
-                    const doseSub = medDoseSecondaryLine(m);
                     const usualHint = formatUsualTimeHint(m.usualTimeLocalHHmm);
                     const formLbl =
                       m.medicationForm && typeof m.medicationForm === "string" && isMedicationFormKind(m.medicationForm)
@@ -1175,22 +1637,24 @@ export default function DashboardPage() {
                               .filter(Boolean)
                               .join(" · ") || "Details not added"}
                           </p>
-                          {doseSub ? (
-                            <p className="text-[10px] mv-muted mt-0.5">You entered: {doseSub}</p>
-                          ) : null}
-                          {m.medicationProductCategory && m.medicationProductCategory !== "unspecified" ? (
-                            <div className="mt-1.5 flex flex-wrap gap-1">
-                              <Badge className="text-[10px] py-0.5">
-                                {medicationProductCategoryLabel(m.medicationProductCategory)}
-                              </Badge>
-                            </div>
-                          ) : null}
-                          {/* Active reminder indicator */}
                           {(() => {
                             const rems = remindersByMedKey[m.name.trim().toLowerCase()] ?? [];
-                            if (!rems.length) return null;
+                            const isAuto = m.trackingMode === "auto";
+                            const showCategory =
+                              m.medicationProductCategory && m.medicationProductCategory !== "unspecified";
+                            if (!showCategory && !isAuto && rems.length === 0) return null;
                             return (
-                              <div className="mt-1.5 flex flex-wrap gap-1">
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                {showCategory ? (
+                                  <Badge className="text-[10px] py-0.5">
+                                    {medicationProductCategoryLabel(m.medicationProductCategory)}
+                                  </Badge>
+                                ) : null}
+                                {isAuto ? (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/8 px-2 py-0.5 text-[10px] text-emerald-400">
+                                    ⚡ Auto-tracking
+                                  </span>
+                                ) : null}
                                 {rems.slice(0, 2).map((r) => (
                                   <span
                                     key={r.id}
@@ -1227,400 +1691,203 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       {isOpen && (
-                        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 text-xs space-y-3">
-                          <p>
-                            <span className="font-semibold">When to take it:</span>{" "}
-                            {nextDoseWindow(m.frequency, m.usualTimeLocalHHmm)}
-                          </p>
-                          <p>
-                            <span className="font-semibold">About how many doses left:</span> {remaining}
-                          </p>
-                          <p className="mv-muted">
-                            This count is a rough guess from your schedule and stock. Set your pack size below so it
-                            stays accurate.
-                          </p>
-                          <div className="space-y-1.5">
-                            <p className="font-semibold text-[11px]">Pills or doses left (pack size)</p>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Input
-                                className="h-9 w-24 text-xs"
-                                inputMode="numeric"
-                                placeholder="Count"
-                                value={panelStockCount}
-                                onChange={(e) => setPanelStockCount(e.target.value)}
-                              />
-                              <Button type="button" variant="ghost" className="h-8 px-3 text-xs" onClick={() => savePanelStock(i)}>
-                                Save count
-                              </Button>
-                              <Button variant="ghost" className="h-8 px-3 gap-1 text-xs" onClick={() => refillMed(i)}>
-                                <RotateCw className="h-3.5 w-3.5" /> Quick refill (30)
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Button variant="ghost" className="h-8 px-3" onClick={() => logMissedDose(i)}>
-                              I missed a dose
-                            </Button>
-                          </div>
-                          {(m.missedDoses ?? 0) > 0 && (
-                            <p className="mv-muted">
-                              Missed doses noted: {m.missedDoses} {m.lastMissedISO ? `(last: ${m.lastMissedISO})` : ""}
-                            </p>
-                          )}
-                          <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                            <p className="font-semibold text-[11px]">Journal · dose log</p>
-                            <p className="text-[10px] mv-muted leading-snug">
-                              Adds one dated line to your health journal for this medicine.
-                            </p>
-                            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                              <label className="block text-[10px] text-[var(--muted)]">
-                                When
-                                <Input
-                                  className="mt-0.5 h-8 text-[11px]"
-                                  type="datetime-local"
-                                  value={panelIntakeWhen}
-                                  onChange={(e) => setPanelIntakeWhen(e.target.value)}
-                                />
-                              </label>
-                              <label className="block text-[10px] text-[var(--muted)]">
-                                What happened
-                                <select
-                                  className="uma-select mt-0.5 h-8 w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-2 text-[11px] text-[var(--fg)]"
-                                  value={panelIntakeAction}
-                                  onChange={(e) =>
-                                    setPanelIntakeAction(e.target.value as MedicationIntakeLogEntry["action"])
-                                  }
-                                >
-                                  <option value="taken">Took it</option>
-                                  <option value="missed">Missed</option>
-                                  <option value="skipped">Skipped on purpose</option>
-                                  <option value="extra">Extra dose</option>
-                                </select>
-                              </label>
-                            </div>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <Input
-                                className="h-8 text-[11px]"
-                                inputMode="decimal"
-                                placeholder="Amount (optional)"
-                                value={panelIntakeAmount}
-                                onChange={(e) => setPanelIntakeAmount(e.target.value)}
-                              />
-                              <select
-                                className="uma-select h-8 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-2 text-[11px] text-[var(--fg)]"
-                                value={panelIntakeUnit}
-                                onChange={(e) => setPanelIntakeUnit(e.target.value as MedDoseUserUnit)}
-                              >
-                                {MED_DOSE_USER_UNIT_OPTIONS.map((o) => (
-                                  <option key={o.value} value={o.value}>
-                                    {o.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <Input
-                              className="h-8 text-[11px]"
-                              placeholder="Notes (optional)"
-                              value={panelIntakeNotes}
-                              onChange={(e) => setPanelIntakeNotes(e.target.value)}
-                            />
-                            {panelIntakeDoseError ? (
-                              <p className="text-[10px] text-[var(--accent-2)]">{panelIntakeDoseError}</p>
-                            ) : null}
-                            <Button
+                        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 text-xs space-y-0">
+                          {/* ── Section 1: Tracking toggle + Stock ── */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
+                            <button
                               type="button"
-                              variant="ghost"
-                              className="h-8 w-full px-3 text-xs gap-1"
-                              onClick={() => panelSaveIntakeLog(i)}
-                            >
-                              <Activity className="h-3.5 w-3.5" />
-                              Save to journal
-                            </Button>
-                          </div>
-                          <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                            <p className="font-semibold text-[11px]">Form</p>
-                            <p className="text-[10px] mv-muted leading-snug">
-                              Pill, capsule, injection, cream, and so on — for your own records, not a clinical code.
-                            </p>
-                            <select
-                              className="uma-select w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] py-2 text-xs text-[var(--fg)]"
-                              value={panelMedForm}
-                              onChange={(e) => {
-                                const v = e.target.value as MedicationFormKind;
-                                setPanelMedForm(v);
-                                if (v !== "other") setPanelMedFormOther("");
-                              }}
-                            >
-                              {MEDICATION_FORM_OPTIONS.map((o) => (
-                                <option key={o.value} value={o.value}>
-                                  {o.label}
-                                </option>
-                              ))}
-                            </select>
-                            {panelMedForm === "other" ? (
-                              <Input
-                                className="h-9 text-xs mt-1"
-                                placeholder="Describe the form"
-                                value={panelMedFormOther}
-                                onChange={(e) => setPanelMedFormOther(e.target.value)}
-                              />
-                            ) : null}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              className="h-8 px-3 text-xs w-full"
-                              onClick={() => savePanelMedicationForm(i)}
-                            >
-                              Save form
-                            </Button>
-                          </div>
-                          <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                            <p className="font-semibold text-[11px]">Dose</p>
-                            <p className="text-[10px] mv-muted leading-snug">
-                              Stored as mg for solids, mL for liquids, IU where that applies, or as a count (tablets,
-                              puffs, etc.). Your original amount stays as a note when we convert.
-                            </p>
-                            <div className="grid grid-cols-2 gap-2">
-                              <Input
-                                className="h-9 text-xs"
-                                inputMode="decimal"
-                                placeholder="Amount"
-                                value={panelDoseAmount}
-                                onChange={(e) => setPanelDoseAmount(e.target.value)}
-                              />
-                              <select
-                                className="uma-select h-9 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-2 text-xs text-[var(--fg)]"
-                                value={panelDoseUnit}
-                                onChange={(e) => setPanelDoseUnit(e.target.value as MedDoseUserUnit)}
-                              >
-                                {MED_DOSE_USER_UNIT_OPTIONS.map((o) => (
-                                  <option key={o.value} value={o.value}>
-                                    {o.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Button type="button" variant="ghost" className="h-8 px-3 text-xs" onClick={() => savePanelDose(i)}>
-                                Save dose
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-8 px-3 text-xs"
-                                onClick={() => savePanelDoseClear(i)}
-                              >
-                                Clear dose
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                            <p className="font-semibold text-[11px]">How often</p>
-                            <select
-                              className="uma-select w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] py-2 text-xs text-[var(--fg)]"
-                              value={panelFreqPreset}
-                              onChange={(e) => setPanelFreqPreset(e.target.value as MedFrequencyPresetId)}
-                            >
-                              {MED_FREQUENCY_PRESETS.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.label}
-                                </option>
-                              ))}
-                            </select>
-                            {panelFreqPreset === "other" ? (
-                              <Input
-                                className="h-9 text-xs mt-1"
-                                placeholder="Describe how often"
-                                value={panelFreqOther}
-                                onChange={(e) => setPanelFreqOther(e.target.value)}
-                              />
-                            ) : null}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              className="h-8 px-3 text-xs w-full"
                               onClick={() => {
-                                savePanelSchedule(i);
-                                setRecordNotice("Schedule saved.");
+                                const next = (m.trackingMode ?? "auto") === "auto" ? "manual" : "auto";
+                                updateMed(i, { trackingMode: next });
+                                setRecordNotice(
+                                  next === "auto"
+                                    ? `Auto mode — ${m.name} marked taken daily unless you log a miss.`
+                                    : `Manual mode — log each dose yourself.`
+                                );
                               }}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1.5 text-xs transition-colors hover:border-[var(--accent)]/40"
                             >
-                              Save schedule
-                            </Button>
+                              <span
+                                className={[
+                                  "inline-block h-3 w-6 rounded-full transition-colors relative",
+                                  (m.trackingMode ?? "auto") === "auto"
+                                    ? "bg-[var(--accent)]"
+                                    : "bg-[var(--border)]",
+                                ].join(" ")}
+                              >
+                                <span
+                                  className={[
+                                    "absolute top-0.5 h-2 w-2 rounded-full bg-white transition-[left]",
+                                    (m.trackingMode ?? "auto") === "auto" ? "left-3.5" : "left-0.5",
+                                  ].join(" ")}
+                                />
+                              </span>
+                              {(m.trackingMode ?? "auto") === "auto" ? "Auto-tracking" : "Manual"}
+                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] text-[var(--muted)] whitespace-nowrap">Stock left</span>
+                              <Input
+                                className="w-16 text-xs"
+                                style={{ height: 32 }}
+                                inputMode="numeric"
+                                placeholder="0"
+                                value={panelStockCount}
+                                onChange={(e) => {
+                                  setPanelStockCount(e.target.value);
+                                  const n = Number(e.target.value.trim());
+                                  if (Number.isFinite(n) && n >= 0 && n <= 99_999) {
+                                    updateMed(i, { stockCount: Math.round(n) });
+                                  }
+                                }}
+                              />
+                            </div>
                           </div>
-                          <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                            <p className="font-semibold text-[11px]">Usual time (optional)</p>
-                            <p className="text-[10px] mv-muted leading-snug">
-                              Shown on your summary. For a daily nudge in this browser, add a reminder in the section
-                              below.
-                            </p>
-                            <Input
-                              className="h-9 text-xs w-full max-w-[12rem]"
-                              type="time"
-                              value={panelUsualTime}
-                              onChange={(e) => setPanelUsualTime(e.target.value)}
-                            />
-                            <div className="flex flex-wrap gap-2">
-                              <Button type="button" variant="ghost" className="h-8 px-3 text-xs" onClick={() => savePanelUsualTime(i)}>
-                                Save usual time
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-8 px-3 text-xs"
-                                onClick={() => {
-                                  setPanelUsualTime("");
-                                  updateMed(i, { usualTimeLocalHHmm: undefined });
-                                  setRecordNotice("Usual time cleared.");
+
+                          {/* ── Section 2: Dose details ── */}
+                          <div className="grid grid-cols-3 gap-2 border-t border-[var(--border)] pt-3 pb-3">
+                            <div>
+                              <label className="block text-[11px] text-[var(--muted)] mb-1">Dose</label>
+                              <div className="flex h-8 w-full items-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
+                                <input
+                                  className="h-full min-w-0 flex-[3] rounded-l-xl bg-transparent px-2 text-xs text-[var(--fg)] placeholder:text-[var(--muted)] outline-none"
+                                  inputMode="decimal"
+                                  placeholder="Amount"
+                                  value={panelDoseAmount}
+                                  onChange={(e) => {
+                                    setPanelDoseAmount(e.target.value);
+                                    if (!e.target.value.trim()) { savePanelDoseClear(i); return; }
+                                    const patch = buildDoseFromUserInput(e.target.value, panelDoseUnit);
+                                    if (patch) updateMed(i, patch);
+                                  }}
+                                />
+                                <Select
+                                  value={panelDoseUnit}
+                                  onValueChange={(v) => {
+                                    const unit = v as MedDoseUserUnit;
+                                    setPanelDoseUnit(unit);
+                                    if (panelDoseAmount.trim()) {
+                                      const patch = buildDoseFromUserInput(panelDoseAmount, unit);
+                                      if (patch) updateMed(i, patch);
+                                    }
+                                  }}
+                                >
+                                  <SelectTrigger
+                                    className="uma-select shrink-0 rounded-none rounded-r-[11px] bg-[var(--panel)] px-1.5 text-[10px] text-[var(--muted)]"
+                                    style={{ height: "100%", width: "auto", border: "none", borderLeft: "1px solid var(--border)", gap: 2, boxShadow: "none" }}
+                                  >
+                                    {MED_DOSE_USER_UNIT_OPTIONS.find((o) => o.value === panelDoseUnit)?.short ?? panelDoseUnit}
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {MED_DOSE_USER_UNIT_OPTIONS.map((o) => (
+                                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-[var(--muted)] mb-1">Form</label>
+                              <Select
+                                value={panelMedForm}
+                                onValueChange={(v) => {
+                                  const val = v as MedicationFormKind;
+                                  setPanelMedForm(val);
+                                  if (val !== "other") {
+                                    setPanelMedFormOther("");
+                                    updateMed(i, {
+                                      medicationForm: val === "unspecified" ? undefined : val,
+                                      medicationFormOther: undefined,
+                                    });
+                                  }
                                 }}
                               >
-                                Clear time
-                              </Button>
+                                <SelectTrigger className="uma-select w-full rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-2 text-xs text-[var(--fg)]" style={{ height: 32 }}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {MEDICATION_FORM_OPTIONS.map((o) => (
+                                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </div>
-                          </div>
-                          <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="font-semibold text-[11px]">Reminders · {m.name}</p>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-7 gap-1 px-2 text-[10px]"
-                                onClick={() => void panelRequestNotifications()}
+                            <div>
+                              <label className="block text-[11px] text-[var(--muted)] mb-1">How often</label>
+                              <Select
+                                value={panelFreqPreset}
+                                onValueChange={(v) => {
+                                  const preset = v as MedFrequencyPresetId;
+                                  setPanelFreqPreset(preset);
+                                  if (preset !== "other") {
+                                    const f = frequencyFromPreset(preset, panelFreqOther);
+                                    updateMed(i, { frequency: f });
+                                  }
+                                }}
                               >
-                                <Bell className="h-3 w-3" aria-hidden />
-                                Allow notifications
-                              </Button>
-                            </div>
-                            <p className="text-[10px] mv-muted leading-snug">
-                              Fires only while UMA is open in a tab you allow to notify — not a substitute for clinical
-                              follow-up.
-                            </p>
-                            {panelRemHint ? <p className="text-[10px] text-[var(--fg)]">{panelRemHint}</p> : null}
-                            <label className="flex items-center gap-2 text-[10px] text-[var(--muted)] cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--accent)]"
-                                checked={panelRemRepeatDaily}
-                                onChange={(e) => setPanelRemRepeatDaily(e.target.checked)}
-                              />
-                              Repeat every day
-                            </label>
-                            {panelRemRepeatDaily ? (
-                              <label className="block text-[10px] text-[var(--muted)]">
-                                Time
-                                <Input
-                                  className="mt-0.5 h-8 text-[11px] w-full max-w-[9rem]"
-                                  type="time"
-                                  value={panelRemTime}
-                                  onChange={(e) => setPanelRemTime(e.target.value)}
-                                />
-                              </label>
-                            ) : (
-                              <label className="block text-[10px] text-[var(--muted)]">
-                                One-time when
-                                <Input
-                                  className="mt-0.5 h-8 text-[11px]"
-                                  type="datetime-local"
-                                  value={panelRemOnceWhen}
-                                  onChange={(e) => setPanelRemOnceWhen(e.target.value)}
-                                />
-                              </label>
-                            )}
-                            <label className="block text-[10px] text-[var(--muted)]">
-                              Notes (optional)
-                              <Input
-                                className="mt-0.5 h-8 text-[11px]"
-                                value={panelRemNotes}
-                                onChange={(e) => setPanelRemNotes(e.target.value)}
-                              />
-                            </label>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              className="h-8 w-full gap-1 text-xs"
-                              onClick={() => panelAddReminder(i)}
-                            >
-                              <Bell className="h-3.5 w-3.5" />
-                              Save reminder
-                            </Button>
-                            <div className="space-y-1 max-h-40 overflow-y-auto pr-0.5">
-                              {panelMedReminderRows.length === 0 ? (
-                                <p className="text-[10px] mv-muted py-1">No reminders for this medicine yet.</p>
-                              ) : (
-                                panelMedReminderRows.map((r) => {
-                                  const next = nextReminderFireAt(r);
-                                  const nextLabel = next
-                                    ? `Next: ${next.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}`
-                                    : r.enabled
-                                      ? r.repeatDaily
-                                        ? "—"
-                                        : "Passed"
-                                      : "Off";
-                                  return (
-                                    <div
-                                      key={r.id}
-                                      className="flex flex-wrap items-start justify-between gap-1 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-2 text-[10px]"
-                                    >
-                                      <div className="min-w-0">
-                                        <p className="font-medium leading-tight">{describeMedicationReminder(r)}</p>
-                                        <p className="text-[var(--muted)] mt-0.5">{nextLabel}</p>
-                                        {r.notes ? <p className="mt-0.5 line-clamp-2">{r.notes}</p> : null}
-                                      </div>
-                                      <div className="flex shrink-0 items-center gap-1">
-                                        <label className="flex items-center gap-0.5 text-[10px] text-[var(--muted)] cursor-pointer whitespace-nowrap">
-                                          <input
-                                            type="checkbox"
-                                            className="h-3 w-3 rounded border-[var(--border)] accent-[var(--accent)]"
-                                            checked={r.enabled}
-                                            onChange={(e) => panelSetReminderEnabled(r.id, e.target.checked)}
-                                          />
-                                          On
-                                        </label>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          className="h-7 px-1.5 text-[10px]"
-                                          onClick={() => panelDeleteReminder(r.id)}
-                                        >
-                                          Remove
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  );
-                                })
-                              )}
+                                <SelectTrigger className="uma-select w-full rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-2 text-xs text-[var(--fg)]" style={{ height: 32 }}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {MED_FREQUENCY_PRESETS.map((p) => (
+                                    <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </div>
                           </div>
-                          <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                            <label className="block text-[11px] text-[var(--muted)]">
-                              Type (store-bought vs supplement)
-                              <select
-                                className="uma-select mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] py-2 text-xs text-[var(--fg)]"
+                          {panelMedForm === "other" && (
+                            <div className="pb-3">
+                              <Input className="h-8 text-xs" placeholder="Describe the form" value={panelMedFormOther} onChange={(e) => setPanelMedFormOther(e.target.value)} onBlur={() => savePanelMedicationForm(i)} />
+                            </div>
+                          )}
+                          {panelFreqPreset === "other" && (
+                            <div className="pb-3">
+                              <Input className="h-8 text-xs" placeholder="Describe how often" value={panelFreqOther} onChange={(e) => setPanelFreqOther(e.target.value)} onBlur={() => savePanelSchedule(i)} />
+                            </div>
+                          )}
+
+                          {/* ── Section 3: Usual time + Type ── */}
+                          <div className="grid grid-cols-2 gap-2 border-t border-[var(--border)] pt-3 pb-3">
+                            <div>
+                              <label className="block text-[11px] text-[var(--muted)] mb-1">Usual time</label>
+                              <TimePicker
+                                placeholder="9:30 AM"
+                                value={panelUsualTime}
+                                onChange={(v) => {
+                                  setPanelUsualTime(v);
+                                  const normalized = normalizeUsualTimeHHmm(v);
+                                  updateMed(i, { usualTimeLocalHHmm: normalized });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-[var(--muted)] mb-1">Type</label>
+                              <Select
                                 value={m.medicationProductCategory ?? "unspecified"}
-                                onChange={(e) =>
-                                  updateMed(i, {
-                                    medicationProductCategory: e.target.value as MedicationProductCategory,
-                                    medicationProductCategorySource: "user",
-                                  })
-                                }
+                                onValueChange={(v) => updateMed(i, { medicationProductCategory: v as MedicationProductCategory, medicationProductCategorySource: "user" })}
                               >
-                                <option value="unspecified">Not sure / mixed</option>
-                                <option value="over_the_counter">Over-the-counter</option>
-                                <option value="supplement">Vitamin or supplement</option>
-                              </select>
-                            </label>
-                            <Button
-                              variant="ghost"
-                              className="h-8 px-2 text-xs w-full"
-                              type="button"
-                              onClick={() =>
-                                updateMed(i, {
-                                  medicationProductCategory: inferMedicationProductCategory(m.name),
-                                  medicationProductCategorySource: "auto",
-                                })
-                              }
-                            >
-                              Guess again from the name
+                                <SelectTrigger className="uma-select w-full rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-2 text-xs text-[var(--fg)]" style={{ height: 32 }}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="unspecified">Not sure</SelectItem>
+                                  <SelectItem value="over_the_counter">Over-the-counter</SelectItem>
+                                  <SelectItem value="supplement">Supplement</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          {/* ── Quick actions ── */}
+                          <div className="flex flex-wrap gap-2 pt-2 border-t border-[var(--border)]">
+                            <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => logMissedDose(i)}>
+                              Missed a dose
                             </Button>
+                            {(m.missedDoses ?? 0) > 0 && (
+                              <span className="self-center text-xs text-[var(--muted)]">
+                                {m.missedDoses} missed{m.lastMissedISO ? ` · last ${new Date(m.lastMissedISO).toLocaleDateString()}` : ""}
+                              </span>
+                            )}
                           </div>
                         </div>
                       )}
@@ -1639,15 +1906,12 @@ export default function DashboardPage() {
 
         <DashboardHealthLogSection store={store} onStoreChange={updateStore} />
 
-        <HealthTrendsSection
-          metrics={trendCards.map((t) => ({ name: t.name, data: t.raw }))}
-        />
-        {trendCards.length === 0 && (
-          <Card>
-            <CardContent className="text-sm mv-muted">
-              Charts show up after you save at least one test result.
-            </CardContent>
-          </Card>
+        {trendCards.length > 0 && (
+          <HealthTrendsSection
+            metrics={trendCards.map((t) => ({ name: t.name, data: t.raw }))}
+            pinnedNames={pinnedTrendMetrics}
+            onPinToggle={handlePinToggle}
+          />
         )}
 
         <Card>
@@ -1657,36 +1921,57 @@ export default function DashboardPage() {
                 <Activity className="h-4 w-4 text-[var(--accent)]" />
                 <h2 className="text-sm font-semibold">Recent test results</h2>
               </div>
-              <Badge>{recentLabs.length} on screen</Badge>
+              <div className="flex items-center gap-2">
+                <Badge>{recentLabs.length} on screen</Badge>
+                <div className="flex rounded-xl border border-[var(--border)] overflow-hidden text-xs">
+                  <button type="button" onClick={() => setLabFilter("flagged")}
+                    className={["px-2.5 py-1 font-medium transition-colors", labFilter === "flagged" ? "bg-[var(--accent)] text-[var(--accent-contrast)]" : "bg-transparent text-[var(--muted)] hover:text-[var(--fg)]"].join(" ")}>
+                    Flagged
+                  </button>
+                  <button type="button" onClick={() => setLabFilter("all")}
+                    className={["px-2.5 py-1 font-medium transition-colors", labFilter === "all" ? "bg-[var(--accent)] text-[var(--accent-contrast)]" : "bg-transparent text-[var(--muted)] hover:text-[var(--fg)]"].join(" ")}>
+                    All
+                  </button>
+                </div>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
-            {inlineLabs.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-[var(--border)] p-6 text-sm mv-muted">
-                No test results yet. Upload a file to see them here.
-              </div>
-            ) : (
-              <div className="max-h-[300px] overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-                {inlineLabs.map((lab, idx) => (
-                  <LabReadingTile key={`${lab.name}-${lab.date}-${idx}`} lab={lab} extensions={lex} />
-                ))}
-              </div>
-            )}
-            {recentLabs.length > inlineLabs.length && (
-              <div className="mt-3">
-                <Button variant="ghost" className="w-full" onClick={() => setOverlay("labs")}>
-                  Show more test results
-                </Button>
-              </div>
-            )}
+            {(() => {
+              const displayLabs = labFilter === "flagged" ? flaggedLabs.slice(0, 9) : inlineLabs;
+              return (
+                <>
+                  {labFilter === "flagged" && flaggedLabs.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-600">
+                      ✓ All your latest results look normal.
+                    </div>
+                  ) : displayLabs.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--border)] p-6 text-sm mv-muted">
+                      No test results yet. Upload a file to see them here.
+                    </div>
+                  ) : (
+                    <div className="max-h-[300px] overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                      {displayLabs.map((lab, idx) => (
+                        <LabReadingTile key={`${lab.name}-${lab.date}-${idx}`} lab={lab} extensions={lex} />
+                      ))}
+                    </div>
+                  )}
+                  {labFilter === "all" && recentLabs.length > inlineLabs.length && (
+                    <div className="mt-3">
+                      <Button variant="ghost" className="w-full" onClick={() => setOverlay("labs")}>
+                        Show more test results
+                      </Button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
 
-        <p className="text-xs mv-muted">
-          This screen helps you keep your health files tidy. It is not medical advice. Always talk to your doctor about
-          care decisions.
-        </p>
       </main>
+
+      <Footer />
 
       {printPortalEl
         ? createPortal(
@@ -1702,10 +1987,12 @@ export default function DashboardPage() {
                     Birth date: {pf(store.profile.dob) || "—"} · Sex: {pf(store.profile.sex) || "—"} · Email:{" "}
                     {pf(store.profile.email) || "—"}
                   </p>
-                  {(store.profile.menstrualCycle?.lastPeriodStartISO ||
+                  {store.profile.sex === "Female" &&
+                  (store.profile.menstrualCycle?.lastPeriodStartISO ||
                     (store.profile.menstrualCycle?.flowLogDates?.length ?? 0) > 0) && (
                     <p className="text-sm mt-2">
-                      Cycle (early test): {pf(cycleSummary.headline)} · {pf(cycleSummary.detail)}
+                      Cycle: {pf(cycleSummary.headline)} · {pf(cycleSummary.detail)}
+                      {cycleSummary.phaseLabel ? ` · ${cycleSummary.phaseLabel}` : ""}
                     </p>
                   )}
                 </div>
@@ -1788,11 +2075,9 @@ export default function DashboardPage() {
       {overlay && (
         <div className="fixed inset-0 z-50 no-print flex items-end justify-center p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:items-center sm:p-5">
           <div
-            className={`absolute inset-0 bg-black/45 ${uploadLoading ? "cursor-wait" : ""}`}
-            onClick={() => {
-              if (!uploadLoading) setOverlay(null);
-            }}
-            aria-hidden={uploadLoading}
+            className="absolute inset-0 bg-black/45"
+            onClick={() => setOverlay(null)}
+            aria-hidden="true"
           />
           <div className="relative z-10 flex w-full max-w-4xl max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl sm:max-h-[min(90dvh,52rem)]">
             <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-4">
@@ -1811,11 +2096,8 @@ export default function DashboardPage() {
               </h3>
               <button
                 type="button"
-                disabled={uploadLoading}
-                onClick={() => {
-                  if (!uploadLoading) setOverlay(null);
-                }}
-                className="h-8 w-8 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] text-[var(--fg)] grid place-items-center disabled:opacity-40 disabled:pointer-events-none"
+                onClick={() => setOverlay(null)}
+                className="h-8 w-8 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] text-[var(--fg)] grid place-items-center"
                 aria-label="Close"
               >
                 <X className="h-4 w-4" />
@@ -1844,36 +2126,41 @@ export default function DashboardPage() {
                         value={newMedDoseAmount}
                         onChange={(e) => setNewMedDoseAmount(e.target.value)}
                       />
-                      <select
-                        className="uma-select w-full rounded-2xl border border-[var(--border)] bg-[var(--panel)] py-2.5 px-3 text-sm text-[var(--fg)]"
-                        value={newMedDoseUnit}
-                        onChange={(e) => setNewMedDoseUnit(e.target.value as MedDoseUserUnit)}
-                      >
-                        {MED_DOSE_USER_UNIT_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
+                      <Select value={newMedDoseUnit} onValueChange={(v) => setNewMedDoseUnit(v as MedDoseUserUnit)}>
+                        <SelectTrigger className="uma-select w-full rounded-2xl border border-[var(--border)] bg-[var(--panel)] py-2.5 px-3 text-sm text-[var(--fg)]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MED_DOSE_USER_UNIT_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     {addMedDoseError ? <p className="text-xs text-[var(--accent-2)]">{addMedDoseError}</p> : null}
                   </div>
                   <div>
                     <p className="text-[11px] text-[var(--muted)] mb-1">How often</p>
-                    <select
-                      className="uma-select w-full rounded-2xl border border-[var(--border)] bg-[var(--panel)] py-2.5 px-3 text-sm text-[var(--fg)]"
+                    <Select
                       value={newMedFrequencyPreset}
-                      onChange={(e) => {
-                        setNewMedFrequencyPreset(e.target.value as MedFrequencyPresetId);
+                      onValueChange={(v) => {
+                        setNewMedFrequencyPreset(v as MedFrequencyPresetId);
                         setAddMedFreqError(null);
                       }}
                     >
-                      {MED_FREQUENCY_PRESETS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="uma-select w-full rounded-2xl border border-[var(--border)] bg-[var(--panel)] py-2.5 px-3 text-sm text-[var(--fg)]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MED_FREQUENCY_PRESETS.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     {newMedFrequencyPreset === "other" ? (
                       <Input
                         className="mt-2"
@@ -1889,22 +2176,26 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <p className="text-[11px] text-[var(--muted)] mb-1">Form (optional)</p>
-                    <select
-                      className="uma-select w-full rounded-2xl border border-[var(--border)] bg-[var(--panel)] py-2.5 px-3 text-sm text-[var(--fg)]"
+                    <Select
                       value={newMedForm}
-                      onChange={(e) => {
-                        const v = e.target.value as MedicationFormKind;
-                        setNewMedForm(v);
-                        if (v !== "other") setNewMedFormOther("");
+                      onValueChange={(v) => {
+                        const val = v as MedicationFormKind;
+                        setNewMedForm(val);
+                        if (val !== "other") setNewMedFormOther("");
                         setAddMedFormError(null);
                       }}
                     >
-                      {MEDICATION_FORM_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="uma-select w-full rounded-2xl border border-[var(--border)] bg-[var(--panel)] py-2.5 px-3 text-sm text-[var(--fg)]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MEDICATION_FORM_OPTIONS.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     {newMedForm === "other" ? (
                       <Input
                         className="mt-2"
@@ -1918,15 +2209,15 @@ export default function DashboardPage() {
                     ) : null}
                     {addMedFormError ? <p className="text-xs text-[var(--accent-2)] mt-1">{addMedFormError}</p> : null}
                   </div>
-                  <label className="block text-[11px] text-[var(--muted)]">
+                  <div className="block text-[11px] text-[var(--muted)]">
                     Usual time (optional)
-                    <Input
-                      className="mt-1 h-10 text-sm max-w-[12rem]"
-                      type="time"
-                      value={newMedUsualTime}
-                      onChange={(e) => setNewMedUsualTime(e.target.value)}
-                    />
-                  </label>
+                    <div className="mt-1 max-w-[12rem]">
+                      <TimePicker
+                        value={newMedUsualTime}
+                        onChange={(v) => setNewMedUsualTime(v)}
+                      />
+                    </div>
+                  </div>
                   <Button
                     onClick={() => {
                       if (!newMed.name?.trim()) return;
@@ -1947,27 +2238,14 @@ export default function DashboardPage() {
                     <p className="text-sm font-medium">
                       {overlay === "add-report" ? "Add a new file" : "Upload and read your file"}
                     </p>
-                    <div className="flex flex-wrap gap-2">
-                      {UPLOAD_TYPES.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setUploadType(t)}
-                          className={[
-                            "rounded-full border px-3 py-1 text-xs transition",
-                            t === uploadType
-                              ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-contrast)]"
-                              : "border-[var(--border)] bg-[var(--panel)] text-[var(--fg)]",
-                          ].join(" ")}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
                     <input
                       type="file"
                       accept="application/pdf"
-                      onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                      multiple
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files ?? []);
+                        setUploadFiles(files);
+                      }}
                       className="block w-full text-sm text-[var(--fg)] file:mr-4 file:rounded-xl file:border-0 file:bg-[var(--accent)] file:px-4 file:py-2 file:text-sm file:font-medium file:text-[var(--accent-contrast)] hover:file:brightness-110"
                     />
                     {overlay === "upload-report" && !store.profile.name?.trim() ? (
@@ -1987,20 +2265,35 @@ export default function DashboardPage() {
                         {uploadError}
                       </div>
                     )}
+                    {uploadLoading && (
+                      <div className="flex items-center gap-2 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/8 px-3 py-2 text-xs text-[var(--fg)]">
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--accent)]" />
+                        <span>Reading your file — you can browse around while this runs.</span>
+                      </div>
+                    )}
+                    {globalUpload.queuedFiles.length > 1 && (
+                      <div className="inline-flex rounded-full bg-[var(--accent)]/15 px-3 py-1 text-xs font-medium text-[var(--accent)]">
+                        File {uploadFileIndex + 1} of {globalUpload.queuedFiles.length}
+                      </div>
+                    )}
                     <div className="flex gap-2">
                       <Button onClick={extractUploadDoc} disabled={!uploadFile || uploadLoading} className="gap-2">
                         {uploadLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
-                        {uploadLoading ? "Reading file..." : "Read file"}
+                        {uploadLoading ? "Reading…" : "Read file"}
                       </Button>
                       <Button
                         variant="ghost"
-                        disabled={uploadLoading}
                         onClick={() => {
-                          discardUploadPreview();
-                          setOverlay(null);
+                          if (uploadLoading) {
+                            // Close modal; extraction continues in background — badge will notify
+                            setOverlay(null);
+                          } else {
+                            discardUploadPreview();
+                            setOverlay(null);
+                          }
                         }}
                       >
-                        Cancel
+                        {uploadLoading ? "Continue in background" : "Cancel"}
                       </Button>
                     </div>
                   </div>
@@ -2065,6 +2358,36 @@ export default function DashboardPage() {
                           confirm.
                         </p>
                       ) : null}
+                      {uploadExtractionCost ? (
+                        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-xs">
+                          <p className="font-medium text-[var(--fg)] mb-1">Extraction cost</p>
+                          {/* Extractor source badge */}
+                          <div className="mb-2">
+                            {uploadExtractionCost.extractorSource === "llamaparse" ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                                ⚡ LlamaParse + Claude Haiku
+                                {uploadExtractionCost.llamaParseCredits
+                                  ? ` · ${uploadExtractionCost.llamaParseCredits} credits`
+                                  : ""}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--accent)]/15 px-2 py-0.5 text-[10px] font-medium text-[var(--accent)]">
+                                🧠 Claude full PDF
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 mv-muted">
+                            <span>Input: {uploadExtractionCost.inputTokens.toLocaleString()} tokens</span>
+                            <span>Output: {uploadExtractionCost.outputTokens.toLocaleString()} tokens</span>
+                            <span className="font-semibold text-[var(--fg)]">
+                              Total: {uploadExtractionCost.totalUSD < 0.01
+                                ? "<$0.01"
+                                : `$${uploadExtractionCost.totalUSD.toFixed(4)}`}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[10px] opacity-60">Model: {uploadExtractionCost.model}</p>
+                        </div>
+                      ) : null}
                       <div className="flex flex-wrap gap-2">
                         <Button onClick={() => void commitUploadDoc()}>
                           {uploadNameMismatch ? "Add anyway" : "Save to home screen"}
@@ -2117,9 +2440,6 @@ export default function DashboardPage() {
                           .filter(Boolean)
                           .join(" · ") || "Details not added"}
                       </p>
-                      {medDoseSecondaryLine(m) ? (
-                        <p className="text-[10px] mv-muted mt-0.5">You entered: {medDoseSecondaryLine(m)}</p>
-                      ) : null}
                       {m.medicationProductCategory && m.medicationProductCategory !== "unspecified" ? (
                         <div className="mt-2 flex flex-wrap gap-1">
                           <Badge className="text-[10px] py-0.5">
@@ -2128,23 +2448,27 @@ export default function DashboardPage() {
                         </div>
                       ) : null}
                     </div>
-                    <label className="block text-[11px] text-[var(--muted)]">
+                    <div className="block text-[11px] text-[var(--muted)]">
                       Type
-                      <select
-                        className="uma-select mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] py-2 text-xs text-[var(--fg)]"
+                      <Select
                         value={m.medicationProductCategory ?? "unspecified"}
-                        onChange={(e) =>
+                        onValueChange={(v) =>
                           updateMed(i, {
-                            medicationProductCategory: e.target.value as MedicationProductCategory,
+                            medicationProductCategory: v as MedicationProductCategory,
                             medicationProductCategorySource: "user",
                           })
                         }
                       >
-                        <option value="unspecified">Not sure / mixed</option>
-                        <option value="over_the_counter">Over-the-counter</option>
-                        <option value="supplement">Vitamin or supplement</option>
-                      </select>
-                    </label>
+                        <SelectTrigger className="uma-select mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] py-2 text-xs text-[var(--fg)]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="unspecified">Not sure / mixed</SelectItem>
+                          <SelectItem value="over_the_counter">Over-the-counter</SelectItem>
+                          <SelectItem value="supplement">Vitamin or supplement</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   );
                 })}
@@ -2157,36 +2481,17 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {uploadLoading && (overlay === "upload-report" || overlay === "add-report") ? (
-              <div
-                className="absolute inset-0 z-[60] overflow-y-auto overscroll-contain rounded-3xl bg-[var(--bg)]/88 backdrop-blur-[3px]"
-                role="progressbar"
-                aria-valuetext="Reading file"
-                aria-busy="true"
-              >
-                <div className="flex min-h-full flex-col items-center justify-center gap-4 px-4 py-8 sm:gap-5 sm:px-6">
-                  <Loader2 className="h-10 w-10 shrink-0 animate-spin text-[var(--accent)] sm:h-12 sm:w-12" aria-hidden />
-                  <div className="max-w-sm text-center space-y-2">
-                    <p className="text-sm font-semibold text-[var(--fg)]">Reading your PDF…</p>
-                    <p className="text-xs mv-muted leading-relaxed">
-                      UMA is pulling out test results, medicines, and a short summary. Long or scanned files can take up
-                      to a minute—please keep this tab open.
-                    </p>
-                  </div>
-                  <div className="h-1.5 w-full max-w-xs shrink-0 rounded-full bg-[var(--border)] overflow-hidden">
-                    <div
-                      className="h-full w-2/5 rounded-full bg-[var(--accent)]"
-                      style={{ animation: "umaExtractBar 1.8s ease-in-out infinite" }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : null}
+            {/* No blocking overlay — user can close the modal and browse while extraction runs in background */}
           </div>
         </div>
       )}
 
       <RecordNoticeToast message={recordNotice} onDismiss={dismissRecordNotice} />
+      <RecordNoticeToast
+        message={uploadFailNotice}
+        onDismiss={() => { dismissUploadFailNotice(); globalUpload.clear(); }}
+        kind="error"
+      />
     </div>
   );
 }

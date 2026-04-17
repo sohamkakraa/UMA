@@ -7,7 +7,16 @@ import {
   MenstrualCyclePrefs,
   StandardLexiconEntry,
   UMA_TRACKER_LAB_SOURCE,
+  FamilyMemberMeta,
+  FamilyRelation,
+  UsageLogEntry,
+  UmaNotification,
+  UmaNotificationKind,
+  FamilyLink,
+  FamilyConnectionRequest,
+  FamilyLinkVisibility,
 } from "@/lib/types";
+export type { FamilyMemberMeta, FamilyRelation, UsageLogEntry, UmaNotification, UmaNotificationKind, FamilyLink, FamilyConnectionRequest, FamilyLinkVisibility };
 import { normalizeLabUnitString } from "@/lib/labUnits";
 import { enrichDocFromMarkdown } from "@/lib/parseMarkdownArtifact";
 import { mergeLexiconPatches, resolveCanonicalLabName } from "@/lib/standardized";
@@ -15,6 +24,7 @@ import { applyManualMedicationDefaults, mergeMedicationFromDocument } from "@/li
 import { defaultHealthLogs, normalizeHealthLogs } from "@/lib/healthLogs";
 import { patientStoreForApiPayload } from "@/lib/patientStoreApi";
 import { applyEffectiveThemeToDocument, resolveThemePreference } from "@/lib/themePreference";
+import { generateInternalId, registerPrimaryAccount, registerSubProfile, deregisterEntry } from "@/lib/accountRegistry";
 
 const KEY = "mv_patient_store_v1";
 const ACCOUNT_INIT = "mv_account_initialized_v1";
@@ -54,6 +64,38 @@ function scheduleRemotePush() {
     pushDebounce = null;
     void pushPatientStoreToServer();
   }, PUSH_DEBOUNCE_MS);
+}
+
+/** When the server row predates newer profile fields, keep local values if the payload omits them. */
+function mergeProfileFromServer(
+  local: PatientStore["profile"],
+  server: PatientStore["profile"] | undefined | null,
+): PatientStore["profile"] {
+  const mergedBase: PatientStore["profile"] = { ...local, ...(server ?? {}) };
+  const serverObj = (server ?? {}) as Record<string, unknown>;
+  const localObj = local as Record<string, unknown>;
+  const out = mergedBase as Record<string, unknown>;
+
+  for (const key of ["primaryCareProvider", "nextVisitHospital"] as const) {
+    if (!(key in serverObj)) {
+      out[key] = localObj[key];
+    } else {
+      const v = serverObj[key];
+      const s = typeof v === "string" ? v.trim() : "";
+      out[key] = s ? s : undefined;
+    }
+  }
+  for (const key of [
+    "doctorQuickPick",
+    "facilityQuickPick",
+    "doctorQuickPickHidden",
+    "facilityQuickPickHidden",
+  ] as const) {
+    if (!(key in serverObj)) {
+      out[key] = localObj[key];
+    }
+  }
+  return mergedBase;
 }
 
 /**
@@ -107,6 +149,7 @@ export async function syncPatientStoreWithServer(): Promise<void> {
       const merged: PatientStore = {
         ...server,
         healthLogs: normalizeHealthLogs(server.healthLogs),
+        profile: mergeProfileFromServer(local.profile, server.profile),
         preferences: {
           ...(local.preferences ?? {}),
           ...(server.preferences ?? {}),
@@ -137,10 +180,25 @@ function profilePatchFromSession(session: { email?: string | null; phoneE164?: s
   const patch: Partial<PatientStore["profile"]> = {};
   if (session.email) patch.email = session.email;
   if (session.phoneE164) {
-    const m = session.phoneE164.match(/^(\+\d{1,4})(\d+)$/);
-    if (m) {
-      patch.countryCode = m[1];
-      patch.phone = m[2];
+    // Try matching longest known dial code first (1-4 digits), to avoid greedy mismatch
+    // e.g. "+31685..." should produce "+31" not "+3168"
+    const e164 = session.phoneE164;
+    const DIAL_CODES = [
+      "+1", "+7", "+20", "+27", "+31", "+33", "+34", "+39", "+41", "+44",
+      "+45", "+46", "+47", "+48", "+49", "+52", "+55", "+60", "+61", "+62",
+      "+63", "+64", "+65", "+81", "+82", "+86", "+90", "+91", "+92", "+94",
+      "+98", "+212", "+213", "+233", "+234", "+251", "+254", "+255", "+256",
+      "+880", "+966", "+971",
+    ];
+    // Sort by length descending to match longest first
+    const sorted = [...DIAL_CODES].sort((a, b) => b.length - a.length);
+    const matched = sorted.find(code => e164.startsWith(code));
+    if (matched) {
+      patch.countryCode = matched;
+      patch.phone = e164.slice(matched.length);
+    } else {
+      const m = e164.match(/^(\+\d{1,3})(\d+)$/);
+      if (m) { patch.countryCode = m[1]; patch.phone = m[2]; }
     }
   }
   return patch;
@@ -161,6 +219,7 @@ export function createBlankPatientStore(
       allergies: [],
       conditions: [],
       trends: [],
+      internalId: partialProfile?.internalId ?? generateInternalId(),
       countryCode: partialProfile?.countryCode ?? "",
       ...partialProfile,
     },
@@ -195,16 +254,26 @@ export function afterOtpSignIn(session: { email?: string | null; phoneE164?: str
         };
       }
       saveStore(merged);
+      if (merged.profile.internalId && merged.profile.email) {
+        registerPrimaryAccount(merged.profile.internalId, merged.profile.email, merged.profile.name || "");
+      }
     } else {
       const blank = createBlankPatientStore(sessionPatch);
       saveStore(blank);
       localStorage.setItem(ACCOUNT_INIT, "1");
+      if (blank.profile.internalId && blank.profile.email) {
+        registerPrimaryAccount(blank.profile.internalId, blank.profile.email, blank.profile.name || "");
+      }
     }
     return;
   }
 
   const s = getStore();
-  saveStore({ ...s, profile: { ...s.profile, ...sessionPatch } });
+  const merged = { ...s, profile: { ...s.profile, ...sessionPatch } };
+  saveStore(merged);
+  if (merged.profile.internalId && merged.profile.email) {
+    registerPrimaryAccount(merged.profile.internalId, merged.profile.email, merged.profile.name || "");
+  }
 }
 
 function defaultMenstrualCycle(): MenstrualCyclePrefs {
@@ -216,6 +285,8 @@ function normalizeMenstrualFromSaved(saved: MenstrualCyclePrefs | undefined): Me
   return {
     typicalCycleLengthDays:
       typeof saved?.typicalCycleLengthDays === "number" ? saved.typicalCycleLengthDays : base.typicalCycleLengthDays,
+    periodLengthDays:
+      typeof saved?.periodLengthDays === "number" ? saved.periodLengthDays : undefined,
     lastPeriodStartISO: typeof saved?.lastPeriodStartISO === "string" ? saved.lastPeriodStartISO : undefined,
     flowLogDates: Array.isArray(saved?.flowLogDates) ? saved.flowLogDates : [...(base.flowLogDates ?? [])],
   };
@@ -240,25 +311,31 @@ function parseStoredPatientStore(parsed: unknown): PatientStore {
   const safeTheme =
     theme === "dark" || theme === "light" || theme === "system" ? theme : blank.preferences.theme;
 
+  const profile = {
+    ...blank.profile,
+    ...savedProfile,
+    name: typeof savedProfile.name === "string" ? savedProfile.name : "",
+    firstName: typeof savedProfile.firstName === "string" ? savedProfile.firstName : "",
+    lastName: typeof savedProfile.lastName === "string" ? savedProfile.lastName : "",
+    allergies: Array.isArray(savedProfile.allergies) ? savedProfile.allergies : [],
+    conditions: Array.isArray(savedProfile.conditions) ? savedProfile.conditions : [],
+    trends: Array.isArray(savedProfile.trends) ? savedProfile.trends : [],
+    bodyMetrics: {
+      ...(blank.profile.bodyMetrics ?? {}),
+      ...(savedProfile.bodyMetrics ?? {}),
+    },
+    menstrualCycle: normalizeMenstrualFromSaved(savedProfile.menstrualCycle),
+  };
+
+  if (!profile.internalId) {
+    profile.internalId = generateInternalId();
+  }
+
   return {
     docs: Array.isArray(parsedSansWearables.docs) ? parsedSansWearables.docs : [],
     meds: Array.isArray(parsedSansWearables.meds) ? parsedSansWearables.meds : [],
     labs: Array.isArray(parsedSansWearables.labs) ? parsedSansWearables.labs : [],
-    profile: {
-      ...blank.profile,
-      ...savedProfile,
-      name: typeof savedProfile.name === "string" ? savedProfile.name : "",
-      firstName: typeof savedProfile.firstName === "string" ? savedProfile.firstName : "",
-      lastName: typeof savedProfile.lastName === "string" ? savedProfile.lastName : "",
-      allergies: Array.isArray(savedProfile.allergies) ? savedProfile.allergies : [],
-      conditions: Array.isArray(savedProfile.conditions) ? savedProfile.conditions : [],
-      trends: Array.isArray(savedProfile.trends) ? savedProfile.trends : [],
-      bodyMetrics: {
-        ...(blank.profile.bodyMetrics ?? {}),
-        ...(savedProfile.bodyMetrics ?? {}),
-      },
-      menstrualCycle: normalizeMenstrualFromSaved(savedProfile.menstrualCycle),
-    },
+    profile,
     preferences: {
       ...blank.preferences,
       ...preferencesSansTrackers,
@@ -276,6 +353,22 @@ function parseStoredPatientStore(parsed: unknown): PatientStore {
       typeof parsedSansWearables.updatedAtISO === "string"
         ? parsedSansWearables.updatedAtISO
         : blank.updatedAtISO,
+    familyMembers: Array.isArray(parsedSansWearables.familyMembers)
+      ? (parsedSansWearables.familyMembers as FamilyMemberMeta[])
+      : undefined,
+    activeFamilyMemberId:
+      typeof parsedSansWearables.activeFamilyMemberId === "string"
+        ? parsedSansWearables.activeFamilyMemberId
+        : undefined,
+    notifications: Array.isArray((parsedSansWearables as Partial<PatientStore>).notifications)
+      ? ((parsedSansWearables as Partial<PatientStore>).notifications as UmaNotification[])
+      : [],
+    familyLinks: Array.isArray((parsedSansWearables as Partial<PatientStore>).familyLinks)
+      ? ((parsedSansWearables as Partial<PatientStore>).familyLinks as import("@/lib/types").FamilyLink[])
+      : undefined,
+    pendingFamilyRequests: Array.isArray((parsedSansWearables as Partial<PatientStore>).pendingFamilyRequests)
+      ? ((parsedSansWearables as Partial<PatientStore>).pendingFamilyRequests as import("@/lib/types").FamilyConnectionRequest[])
+      : undefined,
   };
 }
 
@@ -370,7 +463,16 @@ export function getStore(): PatientStore {
   const raw = localStorage.getItem(KEY);
   if (!raw) return createBlankPatientStore();
   try {
-    return parseStoredPatientStore(JSON.parse(raw));
+    const parsed = parseStoredPatientStore(JSON.parse(raw));
+    if (!parsed.profile.internalId) {
+      parsed.profile.internalId = generateInternalId();
+      try {
+        localStorage.setItem(KEY, JSON.stringify(parsed));
+      } catch {
+        // ignore storage errors
+      }
+    }
+    return parsed;
   } catch {
     return createBlankPatientStore();
   }
@@ -445,7 +547,24 @@ export function detectDocumentOverlapFull(
 ): DocOverlapResult | null {
   const newEnriched = enrichDocFromMarkdown(newDoc, lex);
   const newLabs = newEnriched.labs ?? [];
-  if (newLabs.length < 2) return null;
+
+  // Debug: log what we're working with so overlap failures are diagnosable
+  if (typeof window !== "undefined") {
+    console.log(
+      "[UMA smartMerge] new doc:",
+      newDoc.title,
+      "| dateISO:", newDoc.dateISO ?? "(none)",
+      "| labs after enrich:", newLabs.length,
+      "| existing docs:", existingDocs.length
+    );
+  }
+
+  if (newLabs.length < 2) {
+    if (typeof window !== "undefined") {
+      console.log("[UMA smartMerge] skipping overlap: new doc has <2 labs");
+    }
+    return null;
+  }
 
   const newNames = new Set(
     newLabs.map((l) => resolveCanonicalLabName(l.name, lex).toLowerCase())
@@ -463,12 +582,31 @@ export function detectDocumentOverlapFull(
 
   let bestMatch: DocOverlapResult | null = null;
 
+  // Use same-month as a preference but NOT a gate: compare against all existing
+  // docs and use a higher overlap threshold when dates don't match.
+  const THRESHOLD_SAME_MONTH = 0.35;
+  const THRESHOLD_NO_DATE = 0.50;
+
   for (const existing of existingDocs) {
-    if (!newDoc.dateISO || !existing.dateISO) continue;
-    if (yearMonth(newDoc.dateISO) !== yearMonth(existing.dateISO)) continue;
+    const sameMonth =
+      newDoc.dateISO && existing.dateISO &&
+      yearMonth(newDoc.dateISO) === yearMonth(existing.dateISO);
+
+    // Use a stricter threshold when dates don't align (or are missing)
+    const threshold = sameMonth ? THRESHOLD_SAME_MONTH : THRESHOLD_NO_DATE;
 
     const existingEnriched = enrichDocFromMarkdown(existing, lex);
     const existingLabs = existingEnriched.labs ?? [];
+
+    if (typeof window !== "undefined") {
+      console.log(
+        "[UMA smartMerge]   vs existing:", existing.title,
+        "| dateISO:", existing.dateISO ?? "(none)",
+        "| sameMonth:", !!sameMonth,
+        "| existingLabs:", existingLabs.length
+      );
+    }
+
     if (existingLabs.length < 2) continue;
 
     const existingNames = new Set(
@@ -493,7 +631,18 @@ export function detectDocumentOverlapFull(
     const smallerSetSize = Math.min(newNames.size, existingNames.size);
     if (smallerSetSize === 0) continue;
     const overlapPct = sharedNameCount / smallerSetSize;
-    if (overlapPct < 0.35) continue;
+
+    if (typeof window !== "undefined") {
+      console.log(
+        "[UMA smartMerge]   shared:", sharedNameCount,
+        "| newNames:", newNames.size,
+        "| existingNames:", existingNames.size,
+        "| overlapPct:", Math.round(overlapPct * 100) + "%",
+        "| threshold:", Math.round(threshold * 100) + "%"
+      );
+    }
+
+    if (overlapPct < threshold) continue;
 
     const newExtraCount = [...newNames].filter((n) => !existingNames.has(n)).length;
     const existingExtraCount = [...existingNames].filter((n) => !newNames.has(n)).length;
@@ -507,6 +656,15 @@ export function detectDocumentOverlapFull(
       if (existingLabFingerprints.has(fp)) sharedValueCount++;
     }
     const allSharedValuesMatch = sharedValueCount >= sharedNameCount;
+
+    if (typeof window !== "undefined") {
+      console.log(
+        "[UMA smartMerge]   sharedValues:", sharedValueCount,
+        "| allMatch:", allSharedValuesMatch,
+        "| newExtra:", newExtraCount,
+        "| existingExtra:", existingExtraCount
+      );
+    }
 
     if (allSharedValuesMatch && newExtraCount === 0 && existingExtraCount === 0) {
       // Same labs, same values — exact duplicate
@@ -522,9 +680,17 @@ export function detectDocumentOverlapFull(
       kind = "partial_overlap";
     }
 
+    if (typeof window !== "undefined") {
+      console.log("[UMA smartMerge]   → kind:", kind);
+    }
+
     if (!bestMatch || overlapPct > bestMatch.overlapPct) {
       bestMatch = { kind, existingDoc: existing, overlapPct, newExtraCount, existingExtraCount };
     }
+  }
+
+  if (typeof window !== "undefined") {
+    console.log("[UMA smartMerge] final result:", bestMatch ? bestMatch.kind : "no overlap");
   }
 
   return bestMatch;
@@ -562,12 +728,26 @@ export function smartMergeExtractedDoc(
   const enriched = enrichDocFromMarkdown(doc, lex);
   const overlap = detectDocumentOverlapFull(enriched, store.docs, lex);
 
+  if (typeof window !== "undefined") {
+    console.log(
+      "[UMA smartMerge] overlap result for", enriched.title, "→",
+      overlap ? `${overlap.kind} (${Math.round(overlap.overlapPct * 100)}% match with "${overlap.existingDoc.title}")` : "no overlap"
+    );
+  }
+
   // ── No overlap: straightforward add ────────────────────────────
   if (!overlap) {
     store.docs = [enriched, ...store.docs].slice(0, 500);
     rebuildLabsAndMedsFromDocuments(store);
     mergeDocProfileFields(store, enriched);
     saveStore(store);
+    pushNotification({
+      kind: enriched.type === "Lab report" ? "lab_uploaded" : "doc_uploaded",
+      title: `${enriched.type} saved`,
+      body: enriched.summary.slice(0, 120),
+      actionHref: `/docs/${enriched.id}`,
+      actionLabel: "View document",
+    });
     return {
       action: "added",
       store,
@@ -603,6 +783,13 @@ export function smartMergeExtractedDoc(
       rebuildLabsAndMedsFromDocuments(store);
       mergeDocProfileFields(store, upgradedDoc);
       saveStore(store);
+      pushNotification({
+        kind: "lab_uploaded",
+        title: `Report updated`,
+        body: `"${existingTitle}" was upgraded with ${overlap.newExtraCount} additional result${overlap.newExtraCount === 1 ? "" : "s"}.`,
+        actionHref: `/docs/${upgradedDoc.id}`,
+        actionLabel: "View document",
+      });
       return {
         action: "upgraded",
         store,
@@ -711,4 +898,368 @@ export function removeDoc(docId: string) {
   rebuildLabsAndMedsFromDocuments(store);
   saveStore(store);
   return store;
+}
+
+// ─── Family member store helpers ──────────────────────────────────────────────
+
+function familyKey(id: string): string {
+  return `mv_patient_store_family_${id}_v1`;
+}
+
+/** Get or create the PatientStore for a specific family member. */
+export function getFamilyMemberStore(id: string): PatientStore {
+  if (typeof window === "undefined") return createBlankPatientStore();
+  const raw = localStorage.getItem(familyKey(id));
+  if (!raw) return createBlankPatientStore();
+  try {
+    return parseStoredPatientStore(JSON.parse(raw));
+  } catch {
+    return createBlankPatientStore();
+  }
+}
+
+/** Save the PatientStore for a specific family member. */
+export function saveFamilyMemberStore(id: string, store: PatientStore): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(familyKey(id), JSON.stringify({ ...store, updatedAtISO: new Date().toISOString() }));
+}
+
+/** Add a family member to the primary account. Creates a blank store for them. */
+export function addFamilyMember(meta: Omit<FamilyMemberMeta, "id" | "addedAtISO">): FamilyMemberMeta {
+  const id = `fm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const internalId = generateInternalId();
+  const newMeta: FamilyMemberMeta = { ...meta, id, internalId, addedAtISO: new Date().toISOString() };
+  const root = getStore();
+  const members = root.familyMembers ?? [];
+
+  // Auto-infer connections based on new member's relation
+  const updatedMembers = [...members, newMeta];
+  autoConnectFamilyMembers(updatedMembers);
+
+  saveStore({ ...root, familyMembers: updatedMembers });
+  saveFamilyMemberStore(id, createBlankPatientStore());
+  registerSubProfile(internalId, root.profile.email ?? "", meta.displayName, meta.relation);
+  return newMeta;
+}
+
+/** Auto-infer and set up family connections based on relations (mother↔father, siblings→parents). */
+function autoConnectFamilyMembers(members: FamilyMemberMeta[]): void {
+  if (!members.length) return;
+
+  // Find mother and father
+  const mothers = members.filter((m) => m.relation === "mother");
+  const fathers = members.filter((m) => m.relation === "father");
+
+  // If we just added a mother and there's already a father (or vice versa), they're now a couple
+  // (no need to explicitly mark via spouseId field; the UI infers this from relations)
+
+  // Auto-mark siblings to link to the same parents
+  // (Again, the UI will infer parent-sibling connections from relation types)
+
+  // Find brothers and sisters
+  const siblings = members.filter((m) => m.relation === "brother" || m.relation === "sister");
+
+  // If there are parents, siblings inherit that relationship implicitly via the UI
+  // No additional field updates needed; the FamilyTreeView component infers the tree structure
+}
+
+/** Update a family member's meta fields (displayName, relation, fullName, linkedEmail, linkedPhone).
+ *  Does NOT touch their isolated PatientStore. */
+export function updateFamilyMemberMeta(
+  id: string,
+  patch: Partial<Pick<FamilyMemberMeta, "displayName" | "relation" | "fullName" | "linkedEmail" | "linkedPhone">>
+): void {
+  if (typeof window === "undefined") return;
+  const root = getStore();
+  const members = (root.familyMembers ?? []).map((m) =>
+    m.id === id ? { ...m, ...patch } : m
+  );
+  saveStore({ ...root, familyMembers: members });
+}
+
+/** Remove a family member and their data. Switches back to self if they were active. */
+export function removeFamilyMember(id: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(familyKey(id));
+  const root = getStore();
+  const memberToRemove = (root.familyMembers ?? []).find((m) => m.id === id);
+  if (memberToRemove?.internalId) {
+    deregisterEntry(memberToRemove.internalId);
+  }
+  const members = (root.familyMembers ?? []).filter((m) => m.id !== id);
+  const active = root.activeFamilyMemberId === id ? undefined : root.activeFamilyMemberId;
+  saveStore({ ...root, familyMembers: members, activeFamilyMemberId: active });
+  window.dispatchEvent(new CustomEvent("mv-active-member-changed"));
+}
+
+/** Switch the currently viewed profile. Pass undefined or "self" to view the primary. */
+export function setActiveFamilyMember(id: string | undefined): void {
+  const root = getStore();
+  saveStore({ ...root, activeFamilyMemberId: id ?? undefined });
+  window.dispatchEvent(new CustomEvent("mv-active-member-changed"));
+  window.dispatchEvent(new CustomEvent("mv-store-update", { detail: getViewingStore() }));
+}
+
+/**
+ * Returns the PatientStore of whoever is currently being viewed.
+ * If `activeFamilyMemberId` is set to a valid member ID, returns their store.
+ * Otherwise returns the primary user's store.
+ */
+export function getViewingStore(): PatientStore {
+  const root = getStore();
+  const activeId = root.activeFamilyMemberId;
+  if (!activeId) return root;
+  const member = (root.familyMembers ?? []).find((m) => m.id === activeId);
+  if (!member) return root; // safety: member no longer exists
+  return getFamilyMemberStore(activeId);
+}
+
+/** Same blank snapshot on server and the client's first render — avoids SSR/hydration drift. Real data loads in `useEffect` via `getViewingStore()`. */
+export function getHydrationSafeViewingStore(): PatientStore {
+  return createBlankPatientStore();
+}
+
+/**
+ * Save the PatientStore for whoever is currently being viewed.
+ * Routes to either the primary store or the active family member's store.
+ */
+export function saveViewingStore(store: PatientStore): void {
+  const root = getStore();
+  const activeId = root.activeFamilyMemberId;
+  if (!activeId) {
+    saveStore(store);
+    return;
+  }
+  const member = (root.familyMembers ?? []).find((m) => m.id === activeId);
+  if (!member) {
+    saveStore(store);
+    return;
+  }
+  saveFamilyMemberStore(activeId, store);
+  // Notify listeners so UI refreshes
+  window.dispatchEvent(new CustomEvent("mv-store-update", { detail: store }));
+}
+
+/** Get the currently active family member's meta (or null if viewing self). */
+export function getActiveFamilyMember(): FamilyMemberMeta | null {
+  const root = getStore();
+  const activeId = root.activeFamilyMemberId;
+  if (!activeId) return null;
+  return (root.familyMembers ?? []).find((m) => m.id === activeId) ?? null;
+}
+
+/* ─── Usage Log ──────────────────────────────────────────── */
+const USAGE_LOG_KEY = "mv_usage_log_v1";
+const MAX_USAGE_LOG_ENTRIES = 500;
+
+export function getUsageLog(): UsageLogEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(USAGE_LOG_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as UsageLogEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function appendUsageLogEntry(
+  entry: Omit<UsageLogEntry, "id" | "timestampISO">
+): void {
+  if (typeof window === "undefined") return;
+  const log = getUsageLog();
+  const newEntry: UsageLogEntry = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    timestampISO: new Date().toISOString(),
+    ...entry,
+  };
+  const trimmed = [newEntry, ...log].slice(0, MAX_USAGE_LOG_ENTRIES);
+  try {
+    localStorage.setItem(USAGE_LOG_KEY, JSON.stringify(trimmed));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function clearUsageLog(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(USAGE_LOG_KEY);
+}
+
+export function getUsageSummary(): {
+  totalUSD: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  extractionCount: number;
+  chatCount: number;
+  entries: UsageLogEntry[];
+} {
+  const entries = getUsageLog();
+  let totalUSD = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let extractionCount = 0;
+  let chatCount = 0;
+  for (const e of entries) {
+    totalUSD += e.totalUSD;
+    totalInputTokens += e.inputTokens;
+    totalOutputTokens += e.outputTokens;
+    if (e.kind === "pdf_extraction") extractionCount++;
+    if (e.kind === "chat_message") chatCount++;
+  }
+  return { totalUSD, totalInputTokens, totalOutputTokens, extractionCount, chatCount, entries };
+}
+
+/* ─── In-app Notifications ───────────────────────────────── */
+const MAX_NOTIFICATIONS = 100;
+
+/** Add a notification to the primary account store (notifications are always on the root account). */
+export function pushNotification(
+  notif: Omit<UmaNotification, "id" | "createdAtISO">
+): UmaNotification {
+  if (typeof window === "undefined") return { id: "", createdAtISO: "", ...notif };
+  const store = getStore();
+  const newNotif: UmaNotification = {
+    id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    createdAtISO: new Date().toISOString(),
+    ...notif,
+  };
+  const existing = store.notifications ?? [];
+  // Dedupe: skip if same kind + title added in the last 60 seconds
+  const recentDupe = existing.find(
+    (n) =>
+      n.kind === newNotif.kind &&
+      n.title === newNotif.title &&
+      Date.now() - new Date(n.createdAtISO).getTime() < 60_000
+  );
+  if (recentDupe) return recentDupe;
+  const updated = [newNotif, ...existing].slice(0, MAX_NOTIFICATIONS);
+  saveStore({ ...store, notifications: updated });
+  window.dispatchEvent(new CustomEvent("uma-notification-added"));
+  return newNotif;
+}
+
+/** Mark a notification as read. */
+export function markNotificationRead(id: string): void {
+  if (typeof window === "undefined") return;
+  const store = getStore();
+  const notifications = (store.notifications ?? []).map((n) =>
+    n.id === id ? { ...n, readAtISO: new Date().toISOString() } : n
+  );
+  saveStore({ ...store, notifications });
+}
+
+/** Mark all notifications as read. */
+export function markAllNotificationsRead(): void {
+  if (typeof window === "undefined") return;
+  const store = getStore();
+  const readAt = new Date().toISOString();
+  const notifications = (store.notifications ?? []).map((n) =>
+    n.readAtISO ? n : { ...n, readAtISO: readAt }
+  );
+  saveStore({ ...store, notifications });
+}
+
+/** Dismiss (delete) a single notification. */
+export function dismissNotification(id: string): void {
+  if (typeof window === "undefined") return;
+  const store = getStore();
+  saveStore({ ...store, notifications: (store.notifications ?? []).filter((n) => n.id !== id) });
+}
+
+/** Clear all notifications. */
+export function clearAllNotifications(): void {
+  if (typeof window === "undefined") return;
+  const store = getStore();
+  saveStore({ ...store, notifications: [] });
+}
+
+/** Mark a notification as unread. */
+export function markNotificationUnread(id: string): void {
+  if (typeof window === "undefined") return;
+  const store = getStore();
+  const notifications = (store.notifications ?? []).map((n) =>
+    n.id === id ? { ...n, readAtISO: undefined } : n
+  );
+  saveStore({ ...store, notifications });
+}
+
+/** Delete a set of notifications by id. */
+export function deleteNotifications(ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  const store = getStore();
+  saveStore({ ...store, notifications: (store.notifications ?? []).filter((n) => !ids.has(n.id)) });
+}
+
+/** Mark a set of notifications as read by id. */
+export function markNotificationsRead(ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  const store = getStore();
+  const readAt = new Date().toISOString();
+  const notifications = (store.notifications ?? []).map((n) =>
+    ids.has(n.id) ? { ...n, readAtISO: readAt } : n
+  );
+  saveStore({ ...store, notifications });
+}
+
+/** Mark a set of notifications as unread by id. */
+export function markNotificationsUnread(ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  const store = getStore();
+  const notifications = (store.notifications ?? []).map((n) =>
+    ids.has(n.id) ? { ...n, readAtISO: undefined } : n
+  );
+  saveStore({ ...store, notifications });
+}
+
+/** Count unread notifications. */
+export function unreadNotificationCount(): number {
+  if (typeof window === "undefined") return 0;
+  return (getStore().notifications ?? []).filter((n) => !n.readAtISO).length;
+}
+
+/* ─── Auto-mode adherence helper ─────────────────────────── */
+
+/**
+ * For each medication in `auto` tracking mode, auto-log a "taken" entry for today
+ * if no log entry (taken/missed/skipped/extra) has been recorded for that med today.
+ * Should be called once per day (on app open; the runner deduplicates via date).
+ */
+export function autoLogTodayDoses(): void {
+  if (typeof window === "undefined") return;
+  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  const store = getStore();
+  const hl = normalizeHealthLogs(store.healthLogs);
+
+  const autoMeds = (store.meds ?? []).filter((m) => m.trackingMode === "auto");
+  if (!autoMeds.length) return;
+
+  const existingTodayNames = new Set(
+    hl.medicationIntake
+      .filter((e) => e.loggedAtISO.startsWith(today))
+      .map((e) => e.medicationName.trim().toLowerCase())
+  );
+
+  const newEntries: import("@/lib/types").MedicationIntakeLogEntry[] = [];
+  for (const med of autoMeds) {
+    const key = med.name.trim().toLowerCase();
+    if (existingTodayNames.has(key)) continue; // already logged today
+    newEntries.push({
+      id: `auto_${today}_${key.replace(/\s+/g, "_").slice(0, 30)}_${Math.random().toString(36).slice(2, 6)}`,
+      loggedAtISO: `${today}T08:00:00.000Z`,
+      medicationName: med.name.trim(),
+      action: "taken",
+      notes: "Auto-logged (auto tracking mode)",
+    });
+  }
+
+  if (!newEntries.length) return;
+  saveStore({
+    ...store,
+    healthLogs: {
+      ...hl,
+      medicationIntake: [...newEntries, ...hl.medicationIntake],
+    },
+  });
 }

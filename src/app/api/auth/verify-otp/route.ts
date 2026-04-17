@@ -9,9 +9,21 @@ import {
   sessionSigningFailureHint,
   signSessionToken,
 } from "@/lib/auth/sessionToken";
+import { checkRateLimitDb } from "@/lib/auth/otpRateLimitDb";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
+
+// Fixed VULN-005: rate-limit OTP verify attempts to prevent brute-force.
+// A 6-digit OTP has only 1M combinations — without this, all can be tried
+// within the 10-minute TTL window at modest request rates.
+const VERIFY_RATE_KEY_PREFIX = "otp-verify:";
+
+function clientIp(req: Request): string {
+  const xf = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for");
+  if (xf) return xf.split(",")[0]!.trim() || "unknown";
+  return "unknown";
+}
 
 const bodySchema = z.object({
   identifier: z.string().min(3).max(320),
@@ -20,6 +32,15 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
+  // Fixed VULN-005 + VULN-007: DB-backed rate limit on verify (10 per 15 min per IP)
+  const ip = clientIp(req);
+  if (!(await checkRateLimitDb(`${VERIFY_RATE_KEY_PREFIX}${ip}`, 10, 15 * 60 * 1000))) {
+    return NextResponse.json(
+      { ok: false, error: "Too many verification attempts. Please wait a few minutes and try again." },
+      { status: 429 },
+    );
+  }
+
   const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "Invalid request." }, { status: 400 });

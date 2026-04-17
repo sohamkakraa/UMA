@@ -8,26 +8,35 @@ export type SessionClaims = {
   phoneE164?: string;
 };
 
+/**
+ * Fixed VULN-009: minimum secret length raised from 16 to 32 characters.
+ * AUTH_SECRET should be generated with: openssl rand -hex 32
+ * A 16-char secret has too little entropy for an HMAC-SHA256 signing key.
+ */
+const MIN_SECRET_LEN = 32;
+
 function getSecret(): string {
   const s = process.env.AUTH_SECRET;
-  if (s && s.length >= 16) return s;
+  if (s && s.length >= MIN_SECRET_LEN) return s;
   if (process.env.NODE_ENV !== "production") {
-    return "uma-dev-auth-secret-min-16-chars";
+    // Dev fallback — exactly 32 chars, never used in real deployments
+    return "uma-dev-auth-secret-32chars-xxxx";
   }
   return "";
 }
 
 /**
- * Production (including Vercel Preview: NODE_ENV=production) needs AUTH_SECRET ≥ 16 chars.
+ * Production (including Vercel Preview: NODE_ENV=production) needs AUTH_SECRET ≥ 32 chars.
  * Local `next dev` uses a dev fallback, so missing AUTH_SECRET only breaks prod-like deploys.
+ * Generate a strong secret: openssl rand -hex 32
  */
 export function sessionSigningFailureHint(): string {
   if (process.env.NODE_ENV !== "production") {
     return "Server configuration error.";
   }
   const s = process.env.AUTH_SECRET;
-  if (!s || s.length < 16) {
-    return "Sign-in cannot complete: set AUTH_SECRET to at least 16 characters in this environment (e.g. Vercel → Settings → Environment Variables → Preview).";
+  if (!s || s.length < MIN_SECRET_LEN) {
+    return `Sign-in cannot complete: set AUTH_SECRET to at least ${MIN_SECRET_LEN} characters in this environment (generate with: openssl rand -hex 32).`;
   }
   return "Server configuration error.";
 }

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { defaultHealthLogs, newHealthLogId, normalizeHealthLogs } from "@/lib/healthLogs";
 import type { BloodPressureLogEntry, PatientStore, SideEffectLogEntry } from "@/lib/types";
 import { Activity, Droplets, Stethoscope } from "lucide-react";
@@ -145,15 +146,10 @@ export function DashboardHealthLogSection({
           <CardContent>
             {bpFormOpen ? (
               <form onSubmit={addBloodPressure} className="mb-4 space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
-                <label className={fieldLabel}>
+                <div className={fieldLabel}>
                   When
-                  <Input
-                    className={fieldInput}
-                    type="datetime-local"
-                    value={bpWhen}
-                    onChange={(e) => setBpWhen(e.target.value)}
-                  />
-                </label>
+                  <DateTimePicker value={bpWhen} onChange={setBpWhen} />
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   <label className={fieldLabel}>
                     Systolic (top)
@@ -201,11 +197,7 @@ export function DashboardHealthLogSection({
                 </div>
               </form>
             ) : null}
-            {bpRows.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
-                No readings yet. Tap Add new to log one.
-              </div>
-            ) : (
+            {bpRows.length > 0 ? (
               <div className="max-h-[340px] overflow-y-auto pr-1 space-y-3">
                 {bpRows.map((r) => (
                   <div key={r.id} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
@@ -232,7 +224,7 @@ export function DashboardHealthLogSection({
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
           </CardContent>
         </Card>
 
@@ -256,15 +248,10 @@ export function DashboardHealthLogSection({
           <CardContent>
             {seFormOpen ? (
               <form onSubmit={addSideEffect} className="mb-4 space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
-                <label className={fieldLabel}>
+                <div className={fieldLabel}>
                   When
-                  <Input
-                    className={fieldInput}
-                    type="datetime-local"
-                    value={seWhen}
-                    onChange={(e) => setSeWhen(e.target.value)}
-                  />
-                </label>
+                  <DateTimePicker value={seWhen} onChange={setSeWhen} />
+                </div>
                 <label className={fieldLabel}>
                   What you noticed
                   <Input className={fieldInput} value={seText} onChange={(e) => setSeText(e.target.value)} />
@@ -307,11 +294,7 @@ export function DashboardHealthLogSection({
                 </div>
               </form>
             ) : null}
-            {seRows.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
-                Nothing logged yet. Tap Add new if something bothered you.
-              </div>
-            ) : (
+            {seRows.length > 0 ? (
               <div className="max-h-[340px] overflow-y-auto pr-1 space-y-3">
                 {seRows.map((r) => (
                   <div key={r.id} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
@@ -338,7 +321,7 @@ export function DashboardHealthLogSection({
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
           </CardContent>
         </Card>
       </div>

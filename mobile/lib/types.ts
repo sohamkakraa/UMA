@@ -149,6 +149,9 @@ export interface BodyMetrics {
   waistCm?: string;
   bloodPressureSys?: string;
   bloodPressureDia?: string;
+  heightUnit?: "cm" | "in";
+  weightUnit?: "kg" | "lb";
+  waistUnit?: "cm" | "in";
 }
 
 export interface PatientProfile {
@@ -162,6 +165,11 @@ export interface PatientProfile {
   countryCode?: string;
   primaryCareProvider?: string;
   nextVisitDate?: string;
+  nextVisitHospital?: string;
+  doctorQuickPick?: string[];
+  doctorQuickPickHidden?: string[];
+  facilityQuickPick?: string[];
+  facilityQuickPickHidden?: string[];
   allergies: string[];
   conditions: string[];
   trends: string[];

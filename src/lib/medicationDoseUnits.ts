@@ -52,19 +52,19 @@ const USER_UNIT_SHORT: Record<MedDoseUserUnit, string> = {
   drop: "drop",
 };
 
-export const MED_DOSE_USER_UNIT_OPTIONS: { value: MedDoseUserUnit; label: string }[] = [
-  { value: "mg", label: "mg (milligrams)" },
-  { value: "g", label: "g (grams)" },
-  { value: "mcg", label: "mcg (micrograms)" },
-  { value: "ug", label: "ug / µg (micrograms)" },
-  { value: "mL", label: "mL (millilitres)" },
-  { value: "L", label: "L (litres)" },
-  { value: "IU", label: "IU (international units)" },
-  { value: "tablet", label: "Tablet(s)" },
-  { value: "capsule", label: "Capsule(s)" },
-  { value: "puff", label: "Puff(s)" },
-  { value: "patch", label: "Patch(es)" },
-  { value: "drop", label: "Drop(s)" },
+export const MED_DOSE_USER_UNIT_OPTIONS: { value: MedDoseUserUnit; label: string; short: string }[] = [
+  { value: "mg", label: "mg (milligrams)", short: "mg" },
+  { value: "g", label: "g (grams)", short: "g" },
+  { value: "mcg", label: "mcg (micrograms)", short: "mcg" },
+  { value: "ug", label: "ug / µg (micrograms)", short: "µg" },
+  { value: "mL", label: "mL (millilitres)", short: "mL" },
+  { value: "L", label: "L (litres)", short: "L" },
+  { value: "IU", label: "IU (international units)", short: "IU" },
+  { value: "tablet", label: "Tablet(s)", short: "tab" },
+  { value: "capsule", label: "Capsule(s)", short: "cap" },
+  { value: "puff", label: "Puff(s)", short: "puff" },
+  { value: "patch", label: "Patch(es)", short: "patch" },
+  { value: "drop", label: "Drop(s)", short: "drop" },
 ];
 
 export function formatQtyClean(n: number): string {

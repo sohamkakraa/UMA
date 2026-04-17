@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Select";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/Select";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { AppTopNav } from "@/components/nav/AppTopNav";
 import { getStore, saveStore } from "@/lib/store";
 // Phone feature disabled for now
@@ -186,28 +187,31 @@ export default function OnboardingPage() {
                     Last name
                     <Input className="mt-1" value={lastName} onChange={(e) => setLastName(e.target.value)} />
                   </label>
-                  <label className="text-xs mv-muted">
+                  <div className="text-xs mv-muted">
                     Date of birth
-                    <Input className="mt-1" type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
-                  </label>
-                  <label className="text-xs mv-muted">
+                    <DatePicker
+                      className="mt-1"
+                      value={dob}
+                      onChange={setDob}
+                      placeholder="Pick date of birth"
+                      max={new Date().toISOString().slice(0, 10)}
+                    />
+                  </div>
+                  <div className="text-xs mv-muted">
                     Sex
-                    <Select
-                      required
-                      className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] py-2 text-sm text-[var(--fg)]"
-                      value={sex}
-                      onChange={(e) => setSex(e.target.value)}
-                    >
-                      <option value="" disabled>
-                        Select sex
-                      </option>
-                      {sexOptions.map((x) => (
-                        <option key={x} value={x}>
-                          {x}
-                        </option>
-                      ))}
+                    <Select value={sex} onValueChange={setSex} required>
+                      <SelectTrigger className="mt-1 w-full">
+                        <SelectValue placeholder="Select sex" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sexOptions.map((x) => (
+                          <SelectItem key={x} value={x}>
+                            {x}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
                     </Select>
-                  </label>
+                  </div>
                   <label className="text-xs mv-muted sm:col-span-2">
                     Email
                     <Input

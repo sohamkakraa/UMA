@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import type { DocType, ExtractedDoc, ExtractedMedication, StandardLexiconEntry } from "@/lib/types";
+import type { DocType, ExtractionCost, ExtractedDoc, ExtractedMedication, ExtractorSource, StandardLexiconEntry } from "@/lib/types";
 import { hashPdfBuffer, verifyPatientNameOnDocument } from "@/lib/extractGuards";
 import { buildArtifactSlug, proposeLexiconPatches } from "@/lib/standardized";
 import { applyParsedMarkdownToDoc, parseStructuredFromMarkdown } from "@/lib/parseMarkdownArtifact";
@@ -54,6 +54,10 @@ type LlmExtract = {
   allergies: string[];
   conditions: string[];
   sections: { title: string; items: string[] }[];
+  /** Token usage from the Anthropic API call. */
+  usage?: { input_tokens: number; output_tokens: number };
+  /** Model string used for this extraction. */
+  model?: string;
 };
 
 function assistantTextContent(message: { content: Array<{ type: string; text?: string }> }): string {
@@ -208,7 +212,186 @@ async function extractWithAnthropicFromPdf(
 
   const output = assistantTextContent(message).trim();
   if (!output) throw new Error("Empty LLM response");
-  return parsePdfAgentResponse(output);
+  const parsed = parsePdfAgentResponse(output);
+  return {
+    ...parsed,
+    usage: message.usage as { input_tokens: number; output_tokens: number } | undefined,
+    model: ANTHROPIC_PDF_MODEL,
+  };
+}
+
+/* ─── LlamaParse integration ─────────────────────────────────────────────── */
+
+const LLAMA_PARSE_UPLOAD_URL = "https://api.cloud.llamaindex.ai/api/v2/parse/upload";
+const LLAMA_PARSE_POLL_BASE  = "https://api.cloud.llamaindex.ai/api/v2/parse/job";
+/** Credits consumed per page in cost-effective mode (the cheapest non-fast tier). */
+const LLAMA_CREDITS_PER_PAGE = 3;
+
+type LlamaParseResult = {
+  markdown: string;
+  /** Estimated page count (from metadata). May be 0 if metadata is absent. */
+  pageCount: number;
+};
+
+/**
+ * Upload a PDF to LlamaParse and return the parsed markdown text.
+ * Uses the "cost-effective" tier (3 credits/page).
+ *
+ * Throws:
+ *  - `{ code: "llama_credits_exhausted" }` when the API returns HTTP 402.
+ *  - `Error` for any other failure.
+ */
+async function extractWithLlamaParse(pdfBuffer: Buffer, fileName: string): Promise<LlamaParseResult> {
+  const apiKey = process.env.LLAMA_CLOUD_API_KEY;
+  if (!apiKey) throw Object.assign(new Error("No LLAMA_CLOUD_API_KEY"), { code: "llama_no_key" });
+
+  // 1. Upload the PDF
+  const form = new FormData();
+  const blob = new Blob([new Uint8Array(pdfBuffer)], { type: "application/pdf" });
+  form.append("file", blob, fileName || "document.pdf");
+  form.append("configuration", JSON.stringify({ tier: "cost-effective" }));
+
+  const uploadRes = await fetch(LLAMA_PARSE_UPLOAD_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+
+  if (uploadRes.status === 402) {
+    throw Object.assign(new Error("LlamaParse credits exhausted"), { code: "llama_credits_exhausted" });
+  }
+  if (!uploadRes.ok) {
+    const body = await uploadRes.text().catch(() => "");
+    throw new Error(`LlamaParse upload failed (${uploadRes.status}): ${body.slice(0, 200)}`);
+  }
+
+  const uploadJson = (await uploadRes.json()) as { id?: string; job_id?: string };
+  const jobId = uploadJson.id ?? uploadJson.job_id;
+  if (!jobId) throw new Error("LlamaParse did not return a job id");
+
+  // 2. Poll for completion (max 60 s, every 2 s)
+  const maxAttempts = 30;
+  const pollIntervalMs = 2_000;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise((res) => setTimeout(res, pollIntervalMs));
+
+    const statusRes = await fetch(`${LLAMA_PARSE_POLL_BASE}/${jobId}`, {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    });
+
+    if (!statusRes.ok) continue; // transient error — keep polling
+
+    const statusJson = (await statusRes.json()) as {
+      status?: string;
+      error?: string;
+      metadata?: { pages?: number };
+      result?: { markdown?: string; pages?: Array<{ md?: string; text?: string }> };
+    };
+
+    const jobStatus = (statusJson.status ?? "").toUpperCase();
+
+    if (jobStatus === "ERROR") {
+      throw new Error(`LlamaParse job failed: ${statusJson.error ?? "unknown error"}`);
+    }
+
+    if (jobStatus === "SUCCESS" || jobStatus === "COMPLETED") {
+      // Assemble markdown from result
+      let markdown = "";
+      if (typeof statusJson.result?.markdown === "string") {
+        markdown = statusJson.result.markdown;
+      } else if (Array.isArray(statusJson.result?.pages)) {
+        markdown = statusJson.result.pages
+          .map((p) => p.md ?? p.text ?? "")
+          .join("\n\n---\n\n");
+      }
+
+      if (!markdown.trim()) throw new Error("LlamaParse returned empty content");
+
+      const pageCount = statusJson.metadata?.pages ?? 0;
+      return { markdown, pageCount };
+    }
+    // PENDING / IN_PROGRESS — continue polling
+  }
+
+  throw new Error("LlamaParse job timed out after 60 seconds");
+}
+
+/**
+ * When LlamaParse has already extracted raw markdown text from the PDF,
+ * we send that text (not the binary PDF) to Claude for structured extraction.
+ * This is dramatically cheaper: text tokens vs PDF vision processing.
+ */
+async function extractStructureFromText(
+  rawText: string,
+  fileName: string,
+  typeHint: string,
+  uploadISO: string
+) {
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  // Use Haiku when text is pre-extracted — no need for the heavier PDF model
+  const structureModel =
+    (process.env.ANTHROPIC_STRUCTURE_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001").trim() ||
+    "claude-haiku-4-5-20251001";
+
+  const metaKeys = [
+    "is_medical_document (boolean)",
+    "type (string: Lab report | Prescription | Bill | Imaging | Other)",
+    "title (string, short)",
+    "dateISO (string YYYY-MM-DD or null)",
+    "provider (string or null)",
+    "facility_name (string or null)",
+    "summary (string: ONE sentence, max ~200 characters)",
+    "patient_names_on_document (string[])",
+    "ordering_physicians (string[])",
+  ].join(", ");
+
+  const prompt = [
+    "You are UMA's medical document structuring agent. The text below is already extracted from a medical PDF.",
+    "Your reply MUST start with exactly one fenced code block tagged uma-meta containing a single JSON object.",
+    "Then output the full markdown record.",
+    "",
+    "The JSON object must include ONLY these keys: " + metaKeys + ".",
+    "Use null only where noted. Use [] for empty arrays. Dates ISO YYYY-MM-DD when printed; else null.",
+    "is_medical_document: true only for real clinical or medical-administrative content; false otherwise.",
+    "",
+    "SUMMARY — single sentence, max ~200 chars, plain language. First clause: what this file is. Second clause: the one main finding.",
+    "",
+    "CONTEXT",
+    `- File name: ${fileName}`,
+    `- Upload timestamp (use verbatim in metadata table): ${uploadISO}`,
+    `- Type hint (may be wrong): ${typeHint || "none"}`,
+    "",
+    "MARKDOWN BODY (after the uma-meta fence)",
+    "1. First line: # <short title, max ~80 characters>",
+    "2. | Field | Value | table: File name; File type; Doctors; Hospital / clinic; Date of document; Date of upload.",
+    "3. ## Overview — one short line.",
+    "4. ## Details — lab panels as pipe tables (canonical names: HbA1c, LDL, HDL, TSH, Glucose, Creatinine, etc.); prescriptions as tables; imaging/bills/other as clear sections.",
+    "5. --- then italic: _Not medical advice._",
+    "",
+    "EXTRACTED TEXT FROM PDF:",
+    "```",
+    rawText.slice(0, 80_000), // guard against absurdly large docs
+    "```",
+  ].join("\n");
+
+  const message = await client.messages.create({
+    model: structureModel,
+    max_tokens: 8192,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const output = assistantTextContent(message).trim();
+  if (!output) throw new Error("Empty structuring response from Claude");
+
+  const parsed = parsePdfAgentResponse(output);
+  return {
+    ...parsed,
+    usage: message.usage as { input_tokens: number; output_tokens: number } | undefined,
+    model: structureModel,
+  };
 }
 
 function docTypeFromHint(typeHint: string): DocType | undefined {
@@ -253,6 +436,7 @@ export type ExtractMedicalPdfSuccess = {
   doc: ExtractedDoc;
   lexiconPatches: StandardLexiconEntry[];
   validation: { patientNameCheck: string };
+  extractionCost?: ExtractionCost;
 };
 
 export type ExtractMedicalPdfFailure = {
@@ -266,6 +450,33 @@ export type ExtractMedicalPdfFailure = {
   doc?: ExtractedDoc;
   lexiconPatches?: StandardLexiconEntry[];
 };
+
+/** Approximate Anthropic pricing per million tokens (input / output) in USD. */
+const MODEL_PRICING: Record<string, { inputPerMTok: number; outputPerMTok: number }> = {
+  "claude-opus-4-6":           { inputPerMTok: 15,  outputPerMTok: 75  },
+  "claude-opus-4-5":           { inputPerMTok: 15,  outputPerMTok: 75  },
+  "claude-sonnet-4-6":         { inputPerMTok: 3,   outputPerMTok: 15  },
+  "claude-sonnet-4-5-20250929":{ inputPerMTok: 3,   outputPerMTok: 15  },
+  "claude-haiku-4-5-20251001": { inputPerMTok: 1,   outputPerMTok: 5   },
+  "claude-haiku-4-5":          { inputPerMTok: 1,   outputPerMTok: 5   },
+};
+
+const DEFAULT_PRICING = { inputPerMTok: 3, outputPerMTok: 15 };
+
+function computeExtractionCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  extractorSource: ExtractorSource,
+  llamaParseCredits: number
+): ExtractionCost {
+  const key = Object.keys(MODEL_PRICING).find((k) => model.startsWith(k)) ?? "";
+  const pricing = MODEL_PRICING[key] ?? DEFAULT_PRICING;
+  const totalUSD =
+    (inputTokens / 1_000_000) * pricing.inputPerMTok +
+    (outputTokens / 1_000_000) * pricing.outputPerMTok;
+  return { inputTokens, outputTokens, totalUSD, model, extractorSource, llamaParseCredits };
+}
 
 /**
  * Shared PDF → ExtractedDoc pipeline (Claude + PDF document block + citations + markdown).
@@ -317,20 +528,61 @@ export async function extractMedicalPdfFromBuffer(
     const patientName = inp.patientName.trim();
     const clientLexicon = inp.clientLexicon;
 
-    let llm: Awaited<ReturnType<typeof extractWithAnthropicFromPdf>>;
-    try {
-      llm = await extractWithAnthropicFromPdf(buf, inp.fileName, typeHint, uploadISO);
-    } catch (e: unknown) {
-      let detail = "";
-      if (e instanceof APIError && typeof e.message === "string" && e.message.length > 0 && e.message.length < 400) {
-        detail = ` ${e.message}`;
+    /**
+     * Extraction strategy:
+     *  1. LlamaParse (if LLAMA_CLOUD_API_KEY is set) — handles OCR/layout for free (3 credits/page).
+     *     On success, Claude receives pre-extracted text (much cheaper text tokens, uses Haiku).
+     *  2. If LlamaParse key is absent OR credits exhausted (HTTP 402) → Claude full PDF path (existing behaviour).
+     */
+    type LlmResult = Awaited<ReturnType<typeof extractWithAnthropicFromPdf>>;
+    let llm: LlmResult | undefined;
+    let extractorSource: ExtractorSource = "claude_pdf";
+    let llamaParseCredits = 0;
+
+    const llamaKey = process.env.LLAMA_CLOUD_API_KEY;
+
+    if (llamaKey) {
+      try {
+        const llama = await extractWithLlamaParse(buf, inp.fileName);
+        // LlamaParse succeeded — now use Claude (text mode) to structure it
+        const structured = await extractStructureFromText(llama.markdown, inp.fileName, typeHint, uploadISO);
+        llm = structured;
+        extractorSource = "llamaparse";
+        llamaParseCredits = (llama.pageCount || 1) * LLAMA_CREDITS_PER_PAGE;
+      } catch (e: unknown) {
+        const code = (e as { code?: string }).code;
+        if (code === "llama_credits_exhausted") {
+          // Credits exhausted — fall through to Claude full PDF path
+          console.warn("[UMA] LlamaParse credits exhausted — falling back to Claude PDF extraction");
+        } else if (code !== "llama_no_key") {
+          // Unexpected LlamaParse error — log and fall through
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn("[UMA] LlamaParse failed, falling back to Claude:", msg);
+        }
       }
-      return {
-        ok: false,
-        code: "extract_failed",
-        message: `UMA could not read this PDF with the AI service. Check your API key and try again.${detail} PDF extraction uses ANTHROPIC_PDF_MODEL (default claude-sonnet-4-5-20250929), separate from ANTHROPIC_MODEL.`,
-        status: 502,
-      };
+    }
+
+    if (!llm) {
+      // Claude full PDF path (original behaviour)
+      try {
+        llm = await extractWithAnthropicFromPdf(buf, inp.fileName, typeHint, uploadISO);
+        extractorSource = "claude_pdf";
+        llamaParseCredits = 0;
+      } catch (e: unknown) {
+        let detail = "";
+        if (e instanceof APIError && typeof e.message === "string" && e.message.length > 0 && e.message.length < 400) {
+          detail = ` ${e.message}`;
+        }
+        const llamaNote = llamaKey
+          ? " LlamaParse was attempted first but failed or had no credits."
+          : " Set LLAMA_CLOUD_API_KEY to use LlamaParse as a free-tier primary extractor.";
+        return {
+          ok: false,
+          code: "extract_failed",
+          message: `UMA could not read this PDF with the AI service. Check your API key and try again.${detail}${llamaNote}`,
+          status: 502,
+        };
+      }
     }
 
     const llmType = llm.type ?? docTypeFromHint(typeHint) ?? "Other";
@@ -388,6 +640,18 @@ export async function extractMedicalPdfFromBuffer(
     const parsedMd = parseStructuredFromMarkdown(markdownArtifact, docCore.dateISO, clientLexicon);
     const lexiconPatches = proposeLexiconPatches(parsedMd.rawLabNames, clientLexicon);
 
+    // Compute cost from usage data if available
+    const extractionCost =
+      llm.usage && llm.model
+        ? computeExtractionCost(
+            llm.model,
+            llm.usage.input_tokens,
+            llm.usage.output_tokens,
+            extractorSource,
+            llamaParseCredits
+          )
+        : undefined;
+
     const baseDoc: ExtractedDoc = {
       id,
       type: docCore.type,
@@ -407,6 +671,8 @@ export async function extractMedicalPdfFromBuffer(
       doctors: docCore.doctors,
       facilityName: docCore.facilityName,
       markdownArtifact,
+      extractionCost,
+      extractorSource,
     };
     const doc = applyParsedMarkdownToDoc(baseDoc, parsedMd);
 
@@ -441,6 +707,7 @@ export async function extractMedicalPdfFromBuffer(
               ? "skipped_no_name_on_document"
               : "verified_or_aligned",
       },
+      extractionCost,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Extraction failed unexpectedly.";

@@ -43,9 +43,23 @@ function GoogleLogo({ size = 18 }: { size?: number }) {
   );
 }
 
+/**
+ * Fixed VULN-006: validate ?next= to prevent open redirect.
+ * Only same-origin paths (starting with /) that don't start with "//"
+ * (which browsers interpret as protocol-relative URLs) are accepted.
+ */
+function sanitizeNextUrl(raw: string | null): string {
+  if (!raw) return "/dashboard";
+  // Must be a relative path, not a protocol-relative URL or absolute URL
+  if (raw.startsWith("/") && !raw.startsWith("//") && !raw.includes("://")) {
+    return raw;
+  }
+  return "/dashboard";
+}
+
 export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
   const sp = useSearchParams();
-  const next = sp.get("next") ?? "/dashboard";
+  const next = sanitizeNextUrl(sp.get("next"));
   const oauthError = sp.get("error");
   const router = useRouter();
 
@@ -314,21 +328,14 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
 
                 {step === "enter" ? (
                   <div className="space-y-4">
-                    {/* ── Google sign-in ────────────────────── */}
-                    <a
+                    {/* ── Google sign-in (hidden until configured) ── */}
+                    {/* <a
                       href="/api/auth/google"
                       className="flex w-full items-center justify-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-2.5 text-sm font-medium text-[var(--fg)] shadow-sm transition-colors hover:bg-[var(--panel)] active:opacity-80"
                     >
                       <GoogleLogo size={18} />
                       Continue with Google
-                    </a>
-
-                    {/* ── Divider ───────────────────────────── */}
-                    <div className="flex items-center gap-3">
-                      <div className="h-px flex-1 bg-[var(--border)]" />
-                      <span className="text-[11px] mv-muted select-none">or sign in with email</span>
-                      <div className="h-px flex-1 bg-[var(--border)]" />
-                    </div>
+                    </a> */}
 
                     {/* ── Email OTP ─────────────────────────── */}
                     <form onSubmit={requestOtp} className="space-y-4">

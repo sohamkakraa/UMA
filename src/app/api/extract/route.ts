@@ -4,6 +4,7 @@ import type { StandardLexiconEntry } from "@/lib/types";
 import {
   extractMedicalPdfFromBuffer,
 } from "@/lib/server/medicalPdfPipeline";
+import { requireUserId } from "@/lib/server/authSession";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,13 @@ function parseContentHashes(form: FormData): string[] {
 }
 
 export async function POST(req: Request) {
+  // Fixed VULN-002: require authentication before processing any PDF upload.
+  // Without this, anyone can drive the Anthropic API at the server's cost.
+  const userId = await requireUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  }
+
   try {
     const form = await req.formData();
     const file = form.get("file") as File | null;
@@ -55,6 +63,13 @@ export async function POST(req: Request) {
     }
 
     const buf = Buffer.from(await file.arrayBuffer());
+
+    // Informational fix: verify PDF magic bytes regardless of Content-Type header.
+    // A client could set Content-Type: application/pdf on a non-PDF file.
+    const magic = buf.slice(0, 5).toString("ascii");
+    if (!magic.startsWith("%PDF-")) {
+      return NextResponse.json({ error: "The uploaded file does not appear to be a valid PDF." }, { status: 400 });
+    }
     const result = await extractMedicalPdfFromBuffer({
       buffer: buf,
       fileName: file.name,
@@ -87,6 +102,7 @@ export async function POST(req: Request) {
       doc: result.doc,
       lexiconPatches: result.lexiconPatches,
       validation: result.validation,
+      extractionCost: result.extractionCost ?? null,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Extraction failed unexpectedly.";

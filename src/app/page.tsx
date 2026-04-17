@@ -1,3 +1,4 @@
+import React from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { LandingHeader } from "@/components/nav/LandingHeader";
@@ -62,77 +63,77 @@ export default function HomePage() {
           <div className="mx-auto max-w-6xl px-4">
             <h2 className="text-2xl md:text-3xl font-semibold mv-title">Everything available right now</h2>
             <p className="mt-3 text-sm mv-muted max-w-2xl leading-relaxed">
-              Upload a PDF or start chatting — UMA connects the dots across your reports, medicines, and
-              daily health notes in one place.
+              Upload a PDF or start chatting — UMA connects the dots across your reports, medicines, and daily health notes in one place.
             </p>
 
             <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[
+              {([
                 {
                   icon: Upload,
-                  title: "PDF report extraction",
-                  body: "Drop in a lab report, prescription, or imaging note. UMA reads it and pulls out labs, medicines, allergies, conditions, and a plain-language summary — automatically.",
+                  title: "Reports & records",
+                  bullets: [
+                    "Drop in any PDF — lab results, prescriptions, imaging notes",
+                    "UMA extracts labs, medicines, allergies, and conditions automatically",
+                    "Every file lives in a searchable library with full extracted details",
+                  ],
                 },
                 {
                   icon: TrendingUp,
-                  title: "Lab trends & gauges",
-                  body: "All your key biomarkers in one normalised chart. Hover any line to see the exact value. Gauge cards beneath show where each latest result sits relative to the healthy range.",
-                },
-                {
-                  icon: HeartPulse,
-                  title: "Health dashboard",
-                  body: "Your newest files, active medicines, upcoming visit date, quick profile snapshot, and a printable one-page summary ready for your next appointment.",
+                  title: "Lab trends & body map",
+                  bullets: [
+                    "Key biomarkers charted over time with plain-language labels",
+                    "Gauge cards show where each latest result sits in the healthy range",
+                    "Interactive body diagram lights up with your relevant values",
+                  ],
                 },
                 {
                   icon: MessageCircle,
                   title: "AI health chat",
-                  body: "Ask UMA anything — \"What was my last HbA1c?\", \"Am I still on Metformin?\", \"What does this result mean?\" — and get a plain-English answer grounded in your own records.",
+                  bullets: [
+                    "Ask anything — \"What was my last HbA1c?\" or \"What does this mean?\"",
+                    "Add or update medicines, log doses, and set reminders just by chatting",
+                    "Conversation saved across sessions so UMA remembers context",
+                  ],
                 },
                 {
                   icon: Pill,
-                  title: "Medication management",
-                  body: "Add or update medicines by just saying it in chat. UMA writes the change to your record immediately. Edit dose, form, and frequency directly from the dashboard too.",
+                  title: "Medicines & reminders",
+                  bullets: [
+                    "Full medicine list with dose, form, frequency, and start date",
+                    "One-tap reminder setup — 8 AM, 8 PM, or a custom time",
+                    "Log taken, missed, skipped, or extra doses from chat or dashboard",
+                  ],
                 },
                 {
-                  icon: Bell,
-                  title: "Medication reminders",
-                  body: "After any medicine mention, UMA offers one-tap reminder setup — 8 AM, 8 PM, or pick your own time. Reminders show as bell badges on your dashboard medicines.",
-                },
-                {
-                  icon: ClipboardList,
-                  title: "Health journal",
-                  body: "Log a dose taken, missed, skipped, or extra directly from chat — UMA writes it to your health log automatically. Also track blood pressure readings and side effects.",
-                },
-                {
-                  icon: Activity,
-                  title: "Interactive body map",
-                  body: "Scroll through an illustrated body diagram. Each section lights up with your relevant lab values — testosterone for hormones, CBC for blood, lipids for heart, and more.",
-                },
-                {
-                  icon: History,
-                  title: "Persistent chat history",
-                  body: "Your conversation is saved across sessions so UMA remembers context. Start a new chat anytime to reset, or pick up right where you left off.",
-                },
-                {
-                  icon: FileText,
-                  title: "Document library",
-                  body: "Every uploaded report lives in a searchable list with its extracted summary, date, provider, and all the numbers. Tap any doc to read the full details.",
-                },
-                {
-                  icon: Stethoscope,
-                  title: "Profile & conditions",
-                  body: "Store your name, DOB, allergies, conditions, and primary care provider. Allergies and conditions found in your uploaded documents merge in automatically.",
+                  icon: HeartPulse,
+                  title: "Dashboard & profile",
+                  bullets: [
+                    "Newest files, active medicines, and upcoming visit at a glance",
+                    "Profile stores allergies, conditions, and your care provider",
+                    "Printable one-page summary ready for your next appointment",
+                  ],
                 },
                 {
                   icon: Shield,
-                  title: "Secure sign-in",
-                  body: "Sign in with your email and a short one-time code — no password to remember or lose. Your data stays on this device until you choose to connect other services.",
+                  title: "Privacy & sign-in",
+                  bullets: [
+                    "Email + one-time code — no password to remember or lose",
+                    "Data stays on your device until you choose to connect other services",
+                    "Family profiles let you manage records for people you care for",
+                  ],
                 },
-              ].map((item) => (
-                <div key={item.title} className="tool-tile rounded-2xl p-6">
+              ] as { icon: React.ElementType; title: string; bullets: string[] }[]).map((item) => (
+                <div key={item.title} className="tool-tile rounded-2xl p-5">
                   <item.icon className="h-5 w-5 text-[var(--accent)]" aria-hidden />
-                  <h3 className="mt-4 text-sm font-semibold text-[var(--fg)]">{item.title}</h3>
-                  <p className="mt-2 text-sm mv-muted leading-relaxed">{item.body}</p>
+                  <h3 className="mt-3 text-sm font-semibold text-[var(--fg)]">{item.title}</h3>
+                  <ul className="mt-2 space-y-1.5">
+                    {item.bullets.map((b) => (
+                      <li key={b} className="flex items-start gap-1.5 text-xs mv-muted leading-relaxed">
+                        <span className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]/50" aria-hidden />
+                        {b}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ))}
             </div>
@@ -179,12 +180,10 @@ export default function HomePage() {
         {/* ─── Coming soon ──────────────────────────────────────── */}
         <section className="border-t border-[var(--border)] bg-[var(--panel)]/60 py-16 md:py-20">
           <div className="mx-auto max-w-6xl px-4">
-            <div className="flex items-center gap-2">
-              <span className="rounded-full border border-[var(--accent-2)]/40 bg-[var(--accent-2)]/10 px-3 py-0.5 text-[11px] font-medium text-[var(--accent-2)]">
-                Coming soon
-              </span>
-              <h2 className="text-2xl md:text-3xl font-semibold mv-title">What we are building next</h2>
-            </div>
+            <span className="inline-block rounded-full border border-[var(--accent-2)]/40 bg-[var(--accent-2)]/10 px-3 py-0.5 text-[11px] font-medium text-[var(--accent-2)]">
+              Coming soon
+            </span>
+            <h2 className="mt-3 text-2xl md:text-3xl font-semibold mv-title">What we are building next</h2>
             <p className="mt-4 text-sm mv-muted max-w-3xl leading-relaxed">
               Hospital connections, appointment booking, doctor recommendations, and more — in a steady, careful rollout.
             </p>
@@ -198,6 +197,24 @@ export default function HomePage() {
                     Connect directly to hospitals and clinics you have visited via FHIR-compliant APIs — so your
                     records arrive automatically instead of needing manual upload.
                   </p>
+                </div>
+              </div>
+              <div className="mv-card-muted rounded-2xl p-6 md:col-span-2 flex flex-col sm:flex-row sm:items-start gap-4">
+                <MessageCircle className="h-8 w-8 shrink-0" style={{ color: "#25D366" }} aria-hidden />
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-[var(--fg)]">WhatsApp health assistant<span className="ml-2 inline-block rounded-full bg-[var(--accent-2)]/10 border border-[var(--accent-2)]/30 px-2 py-0.5 text-[10px] font-medium text-[var(--accent-2)]">Coming soon</span></h3>
+                  <p className="mt-2 text-sm mv-muted leading-relaxed">
+                    Chat with UMA directly on WhatsApp — upload a photo of your report, ask about your medicines, log a dose, or get a plain-English explanation of any result.
+                  </p>
+                  <p className="mt-2 text-sm mv-muted leading-relaxed">
+                    Works both ways: save your phone number on UMA and get a verification code via WhatsApp to link your account. Or message UMA on WhatsApp first — if you already have an account, just confirm your email; if not, UMA will walk you through signing up right in the chat.
+                  </p>
+                  <p className="mt-2 text-sm mv-muted leading-relaxed">
+                    Your health companion, wherever you are.
+                  </p>
+                  <span className="mt-3 inline-block rounded-full bg-[#25D366]/10 border border-[#25D366]/30 px-3 py-1 text-[11px] font-medium" style={{color:"#25D366"}}>
+                    WhatsApp Business API · Two-way verification
+                  </span>
                 </div>
               </div>
               <div className="mv-card-muted rounded-2xl p-6">
