@@ -23,7 +23,9 @@ const mockPgClient = {
 };
 
 vi.mock("pg", () => ({
-  Client: vi.fn(() => mockPgClient),
+  Client: vi.fn(function MockClient() {
+    return mockPgClient;
+  }),
 }));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -122,9 +124,9 @@ describe("SSE /api/patient-store/stream", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     // Fire NOTIFY for wrong userId — should NOT produce a data event
-    notificationHandler?.({ payload: "other-user" });
+    (notificationHandler as ((msg: { payload: string }) => void) | null)?.({ payload: "other-user" });
     // Fire NOTIFY for correct userId — should produce a data event
-    notificationHandler?.({ payload: userId });
+    (notificationHandler as ((msg: { payload: string }) => void) | null)?.({ payload: userId });
 
     const chunks = await readChunksWithTimeout(res.body!, 3, 500);
     const dataChunks = chunks.filter((c) => c.startsWith("data:") && !c.includes("connected"));

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { randomInt } from "node:crypto";
 import { setOtpDb } from "@/lib/auth/otpDb";
 import { checkRateLimitDb } from "@/lib/auth/otpRateLimitDb";
 import { normalizeLoginIdentifier } from "@/lib/auth/identifiers";
@@ -14,6 +15,10 @@ import {
   sendSignInOtpEmail,
 } from "@/lib/auth/sendSignInOtp";
 import { isWhatsAppConfigured, sendOtpMessage } from "@/lib/whatsapp/client";
+import {
+  hasTrustedMutationOrigin,
+  requestClientIp,
+} from "@/lib/server/requestSecurity";
 
 export const runtime = "nodejs";
 
@@ -27,34 +32,23 @@ const bodySchema = z.object({
  * over x-forwarded-for, which can be spoofed by clients to bypass rate limiting.
  * On Vercel, x-real-ip is always the actual client IP and cannot be forged.
  */
-function clientIp(req: Request): string {
-  // x-real-ip is set by Vercel/nginx to the true client IP — not user-spoofable
-  const realIp = req.headers.get("x-real-ip");
-  if (realIp?.trim()) return realIp.trim();
-  // Fallback: use the LAST (rightmost) value in x-forwarded-for, which is set
-  // by the trusted proxy, not the client
-  const xf = req.headers.get("x-forwarded-for");
-  if (xf) {
-    const parts = xf.split(",").map((s) => s.trim()).filter(Boolean);
-    return parts[parts.length - 1] ?? "unknown";
-  }
-  return "unknown";
-}
-
 function devReturnAllowed(): boolean {
   return (
     process.env.AUTH_DEV_RETURN_OTP === "1" &&
-    (process.env.NODE_ENV !== "production" || process.env.VERCEL_ENV === "preview")
+    process.env.NODE_ENV !== "production"
   );
 }
 
 export async function POST(req: Request) {
+  if (!hasTrustedMutationOrigin(req)) {
+    return NextResponse.json({ ok: false, error: "Cross-site request blocked." }, { status: 403 });
+  }
   const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "Invalid request." }, { status: 400 });
   }
   const { identifier, phoneCountryCode } = parsed.data;
-  const ip = clientIp(req);
+  const ip = requestClientIp(req);
   // VULN-007 fix: use DB-backed rate limiter (8 OTP requests per hour per IP)
   if (!(await checkRateLimitDb(`otp-req:${ip}`, 8, 60 * 60 * 1000))) {
     return NextResponse.json({ ok: false, error: "Too many requests. Try again later." }, { status: 429 });
@@ -70,7 +64,7 @@ export async function POST(req: Request) {
 
   const betaCfg = getBetaDemoConfig();
   const code =
-    betaCfg && isBetaDemoIdentifier(norm) ? betaCfg.otp : String(Math.floor(100000 + Math.random() * 900000));
+    betaCfg && isBetaDemoIdentifier(norm) ? betaCfg.otp : String(randomInt(100000, 1_000_000));
   try {
     await setOtpDb(norm.key, code);
   } catch {

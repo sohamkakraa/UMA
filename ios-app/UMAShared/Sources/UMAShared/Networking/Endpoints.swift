@@ -28,7 +28,7 @@ public enum UMAEndpoint: Sendable {
         case .chat:
             return Self.baseURL.appendingPathComponent("chat")
         case .stream:
-            return Self.baseURL.appendingPathComponent("stream")
+            return Self.baseURL.appendingPathComponent("patient-store/stream")
         case .requestOTP:
             return Self.baseURL.appendingPathComponent("auth/request-otp")
         case .verifyOTP:
@@ -55,20 +55,23 @@ public enum UMAEndpoint: Sendable {
 // MARK: - Request/Response types
 
 public struct ChatRequest: Codable, Sendable {
-    public let message: String
-    public let history: [ChatMessage]
-    public let store: PatientStore?
+    public let question: String
+    public let messages: [ChatMessage]
 
     public init(message: String, history: [ChatMessage], store: PatientStore? = nil) {
-        self.message = message
-        self.history = history
-        self.store = store
+        self.question = message
+        self.messages = history
     }
 }
 
 public struct ExtractResponse: Codable, Sendable {
     public let doc: ExtractedDoc
-    public let cost: ExtractionCost?
+    public let extractionCost: ExtractionCost?
+}
+
+public struct PatientStoreResponse: Codable, Sendable {
+    public let ok: Bool
+    public let store: PatientStore?
 }
 
 public struct ExtractionCost: Codable, Sendable {
@@ -92,10 +95,12 @@ public struct OTPRequest: Codable, Sendable {
 public struct OTPVerifyRequest: Codable, Sendable {
     public let identifier: String
     public let code: String
+    public let acceptedTermsVersion: String
 
     public init(identifier: String, code: String) {
         self.identifier = identifier
         self.code = code
+        self.acceptedTermsVersion = "2026-07-10"
     }
 }
 
@@ -110,6 +115,7 @@ public struct APIResponse: Codable, Sendable {
 
 public struct SessionResponse: Codable, Sendable {
     public let ok: Bool
+    public let userId: String?
     public let email: String?
     public let phoneE164: String?
 }

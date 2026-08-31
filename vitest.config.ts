@@ -5,11 +5,14 @@ export default defineConfig({
   test: {
     globals: true,
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
-    environmentMatchGlobs: [
-      ["src/**/*.test.tsx", "jsdom"],
-      ["src/**/*.test.ts", "node"],
-    ],
+    environment: "node",
     setupFiles: ["src/components/health/__tests__/setup.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+      include: ["src/lib/**/*.ts", "src/app/api/**/*.ts"],
+      exclude: ["src/**/*.test.ts", "src/**/__tests__/**"],
+    },
   },
   resolve: {
     alias: {

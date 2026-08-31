@@ -12,20 +12,23 @@
     "build": "node scripts/prisma-generate.mjs && node scripts/run-next-build.mjs",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit --incremental false",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build",
     "murphy": "uv run murphy --url http://localhost:3000",
     "murphy:auth": "uv run murphy --url http://localhost:3000 --auth",
     "murphy:goal": "uv run murphy --url http://localhost:3000 --goal",
     "murphy:open": "uv run murphy --open",
-    "eval": "playwright test --project=elderly --project=young-fast",
+    "eval": "playwright test tests/e2e/flows tests/e2e/a11y --project=elderly --project=young-fast",
     "eval:visual": "playwright test tests/e2e/visual",
     "eval:a11y": "playwright test tests/e2e/a11y",
     "eval:update-snapshots": "playwright test --update-snapshots",
     "test:cua": "node scripts/run-openai-cua-test.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.82.0",
+    "@anthropic-ai/sdk": "^0.110.0",
     "@prisma/client": "^6.19.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
@@ -48,10 +51,9 @@
     "input-otp": "^1.4.2",
     "lucide-react": "^0.563.0",
     "nanoid": "^5.1.6",
-    "next": "^16.2.4",
-    "ngrok": "^5.0.0-beta.2",
+    "next": "^16.2.10",
     "openai": "^6.17.0",
-    "pg": "^8.20.0",
+    "pg": "^8.22.0",
     "prisma": "^6.19.0",
     "react": "19.2.3",
     "react-day-picker": "^9.14.0",
@@ -64,6 +66,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -71,20 +74,29 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "^4.1.10",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "^16.2.10",
     "jsdom": "^29.1.1",
     "playwright": "^1.59.1",
+    "simple-git-hooks": "^2.13.1",
     "socket.io-client": "^4.8.3",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.10"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-arm64-gnu": "*"
   },
+  "engines": {
+    "node": ">=20 <25"
+  },
   "simple-git-hooks": {
     "pre-commit": "node scripts/check-code-repo-sync.mjs"
+  },
+  "overrides": {
+    "next": {},
+    "postcss": "^8.5.10"
   }
 }

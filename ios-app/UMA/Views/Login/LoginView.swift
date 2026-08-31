@@ -5,6 +5,7 @@ import UMAShared
 
 struct LoginView: View {
     @Environment(AuthViewModel.self) private var vm
+    @State private var acceptedBetaTerms = false
 
     var body: some View {
         NavigationStack {
@@ -93,6 +94,20 @@ struct LoginView: View {
                     .accessibilityLabel("Error: \(error)")
             }
 
+            Toggle(isOn: $acceptedBetaTerms) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("I am 18 or older and will use synthetic records only.")
+                        .font(.footnote.weight(.semibold))
+                    HStack(spacing: 12) {
+                        Link("Beta terms", destination: URL(string: "https://uma.sohamkakra.com/terms")!)
+                        Link("Privacy", destination: URL(string: "https://uma.sohamkakra.com/privacy")!)
+                    }
+                    .font(.footnote)
+                }
+            }
+            .toggleStyle(.switch)
+            .accessibilityHint("Required before joining the closed beta")
+
             // CTA
             Button {
                 Task { await vm.requestOTP() }
@@ -111,7 +126,7 @@ struct LoginView: View {
                 .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
                 .foregroundStyle(.white)
             }
-            .disabled(vm.isLoading || vm.email.isEmpty)
+            .disabled(vm.isLoading || vm.email.isEmpty || !acceptedBetaTerms)
             .accessibilityLabel("Send verification code")
             .accessibilityHint("Double tap to send a one-time code to your email or WhatsApp")
         }

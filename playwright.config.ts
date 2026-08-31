@@ -5,7 +5,9 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? "github" : "list",
+  reporter: process.env.CI
+    ? [["github"], ["html", { open: "never", outputFolder: "playwright-report" }]]
+    : "list",
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
     trace: "on-first-retry",
@@ -15,6 +17,7 @@ export default defineConfig({
       name: "elderly",
       use: {
         ...devices["iPhone 14 Pro"],
+        browserName: "chromium",
         viewport: { width: 393, height: 852 },
         // 3G throttling — handled in fixture
       },

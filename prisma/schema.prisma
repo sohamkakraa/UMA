@@ -16,6 +16,8 @@ model User {
   googleEmail String?  @map("google_email")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
+  termsAcceptedAt DateTime? @map("terms_accepted_at")
+  termsVersion    String?   @map("terms_version")
 
   whatsappPhone    String?  @unique @map("whatsapp_phone")
   whatsappVerified Boolean  @default(false) @map("whatsapp_verified")

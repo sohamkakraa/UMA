@@ -48,21 +48,20 @@ function RelationIcon({ relation, className }: { relation: string; className?: s
 }
 
 export function FamilySwitcher() {
-  const [activeMember, setActiveMember] = useState<FamilyMemberMeta | null>(null);
-  const [members, setMembers] = useState<FamilyMemberMeta[]>([]);
-  const [selfName, setSelfName] = useState("");
+  const [activeMember, setActiveMember] = useState<FamilyMemberMeta | null>(() => getActiveFamilyMember());
+  const [members, setMembers] = useState<FamilyMemberMeta[]>(() => getStore().familyMembers ?? []);
+  const [selfName, setSelfName] = useState(
+    () => getStore().profile.firstName || getStore().profile.name || "Me",
+  );
   const [showFamilyTree, setShowFamilyTree] = useState(false);
 
-  function refresh() {
-    const root = getStore();
-    setMembers(root.familyMembers ?? []);
-    setSelfName(root.profile.firstName || root.profile.name || "Me");
-    setActiveMember(getActiveFamilyMember());
-  }
-
   useEffect(() => {
-    refresh();
-    const onUpdate = () => refresh();
+    const onUpdate = () => {
+      const root = getStore();
+      setMembers(root.familyMembers ?? []);
+      setSelfName(root.profile.firstName || root.profile.name || "Me");
+      setActiveMember(getActiveFamilyMember());
+    };
     window.addEventListener("mv-store-update", onUpdate);
     window.addEventListener("mv-active-member-changed", onUpdate);
     window.addEventListener("focus", onUpdate);

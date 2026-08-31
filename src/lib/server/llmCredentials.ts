@@ -4,9 +4,16 @@ import type { ProviderId } from "@/lib/providers/registry";
 // pgcrypto symmetric encryption — key stored in LLM_CRED_MASTER_SECRET env var.
 // We call postgres functions directly to keep the key server-side only.
 
+function masterSecret(): string {
+  const secret = process.env.LLM_CRED_MASTER_SECRET?.trim() ?? "";
+  if (secret.length < 32) {
+    throw new Error("LLM_CRED_MASTER_SECRET must contain at least 32 characters");
+  }
+  return secret;
+}
+
 async function encryptKey(plaintext: string): Promise<Uint8Array> {
-  const secret = process.env.LLM_CRED_MASTER_SECRET;
-  if (!secret) throw new Error("LLM_CRED_MASTER_SECRET env var not set");
+  const secret = masterSecret();
   // pgp_sym_encrypt returns BYTEA; Prisma v6 maps BYTEA to Uint8Array
   const result = await prisma.$queryRaw<{ c: Uint8Array }[]>`
     SELECT pgp_sym_encrypt(${plaintext}, ${secret}) as c
@@ -15,8 +22,7 @@ async function encryptKey(plaintext: string): Promise<Uint8Array> {
 }
 
 async function decryptKey(cipher: Uint8Array): Promise<string> {
-  const secret = process.env.LLM_CRED_MASTER_SECRET;
-  if (!secret) throw new Error("LLM_CRED_MASTER_SECRET env var not set");
+  const secret = masterSecret();
   // Convert Uint8Array to Buffer for Prisma raw query parameter
   const cipherBuf = Buffer.from(cipher);
   const result = await prisma.$queryRaw<{ p: string }[]>`

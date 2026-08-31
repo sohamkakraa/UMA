@@ -40,9 +40,10 @@ const CLAIM_STATUS_COLORS: Record<string, string> = {
 interface Props {
   store: PatientStore;
   onStoreChange: () => void;
+  allowEmailSend?: boolean;
 }
 
-export function InsuranceSection({ store, onStoreChange }: Props) {
+export function InsuranceSection({ store, onStoreChange, allowEmailSend = false }: Props) {
   const [plans, setPlans] = useState<InsurancePlan[]>(store.insurancePlans ?? []);
   const [claims, setClaims] = useState<InsuranceClaim[]>(store.insuranceClaims ?? []);
   const [showAddPlan, setShowAddPlan] = useState(false);
@@ -122,8 +123,15 @@ export function InsuranceSection({ store, onStoreChange }: Props) {
 
   async function sendClaim(claim: InsuranceClaim) {
     const plan = plans.find((p) => p.id === claim.planId);
-    const toEmail = plan?.claimEmailAddress || prompt("Enter the insurer's claim email address:");
-    if (!toEmail) return;
+    const toEmail = plan?.claimEmailAddress;
+    if (!allowEmailSend) {
+      setErrorMsg("Claim email sending is disabled during the closed beta. You can still review and copy the draft.");
+      return;
+    }
+    if (!toEmail) {
+      setErrorMsg("Add the insurer's verified claim email to this plan before sending.");
+      return;
+    }
     setSendingClaimId(claim.id);
     setErrorMsg(null);
     try {
@@ -135,8 +143,6 @@ export function InsuranceSection({ store, onStoreChange }: Props) {
           toEmail,
           subject: claim.draftEmailSubject,
           body: claim.draftEmailBody,
-          fromName: [store.profile.firstName, store.profile.lastName].filter(Boolean).join(" ") || store.profile.name,
-          replyTo: store.profile.email,
         }),
       });
       const data = await res.json() as { ok: boolean; claim?: InsuranceClaim; warning?: string; error?: string };
@@ -396,7 +402,7 @@ export function InsuranceSection({ store, onStoreChange }: Props) {
                       )}
 
                       <div className="flex gap-2 flex-wrap">
-                        {claim.status === "draft" && (
+                        {claim.status === "draft" && allowEmailSend && (
                           <Button
                            
                             className="gap-1 text-xs"
@@ -411,6 +417,11 @@ export function InsuranceSection({ store, onStoreChange }: Props) {
                             Send claim email
                           </Button>
                         )}
+                        {claim.status === "draft" && !allowEmailSend ? (
+                          <p className="text-sm text-[var(--muted)]">
+                            Email sending is disabled in this closed beta. Review and copy the draft instead.
+                          </p>
+                        ) : null}
                         <Button
                          
                           variant="ghost"

@@ -5,8 +5,14 @@ import {
   extractMedicalPdfFromBuffer,
 } from "@/lib/server/medicalPdfPipeline";
 import { requireUserId } from "@/lib/server/authSession";
+import { checkRateLimitDb } from "@/lib/auth/otpRateLimitDb";
+import {
+  exceedsDeclaredBodySize,
+  hasTrustedMutationOrigin,
+} from "@/lib/server/requestSecurity";
 
 export const runtime = "nodejs";
+const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
 const LexiconEntrySchema = z.object({
   canonical: z.string().min(1).max(200),
@@ -37,11 +43,23 @@ function parseContentHashes(form: FormData): string[] {
 }
 
 export async function POST(req: Request) {
+  if (!hasTrustedMutationOrigin(req)) {
+    return NextResponse.json({ error: "Cross-site request blocked." }, { status: 403 });
+  }
+  if (exceedsDeclaredBodySize(req, MAX_PDF_BYTES + 1_000_000)) {
+    return NextResponse.json({ error: "The upload is too large. Choose a PDF under 25 MB." }, { status: 413 });
+  }
   // Fixed VULN-002: require authentication before processing any PDF upload.
   // Without this, anyone can drive the Anthropic API at the server's cost.
   const userId = await requireUserId();
   if (!userId) {
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  }
+  if (!(await checkRateLimitDb(`extract:${userId}`, 20, 24 * 60 * 60 * 1000))) {
+    return NextResponse.json(
+      { error: "Daily document-processing limit reached. Try again tomorrow." },
+      { status: 429 },
+    );
   }
 
   try {
@@ -61,6 +79,9 @@ export async function POST(req: Request) {
     if (file.type !== "application/pdf") {
       return NextResponse.json({ error: "Please upload a PDF file." }, { status: 400 });
     }
+    if (file.size > MAX_PDF_BYTES) {
+      return NextResponse.json({ error: "The upload is too large. Choose a PDF under 25 MB." }, { status: 413 });
+    }
 
     const buf = Buffer.from(await file.arrayBuffer());
 
@@ -78,6 +99,7 @@ export async function POST(req: Request) {
       clientLexicon,
       existingContentHashes,
       skipPatientNameCheck,
+      userId,
     });
 
     if (!result.ok) {
@@ -104,8 +126,10 @@ export async function POST(req: Request) {
       validation: result.validation,
       extractionCost: result.extractionCost ?? null,
     });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Extraction failed unexpectedly.";
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch {
+    return NextResponse.json(
+      { error: "Extraction failed unexpectedly. Try again with a smaller PDF." },
+      { status: 500 },
+    );
   }
 }

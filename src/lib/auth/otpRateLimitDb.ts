@@ -7,8 +7,8 @@
  * share the same state.
  *
  * Uses an upsert with atomic increment to avoid race conditions.
- * Falls back to allowing the request if the DB is unavailable (fail-open) to
- * avoid breaking login when Neon is momentarily slow — log the error so ops knows.
+ * Fails closed by default when the database is unavailable. Callers may opt
+ * into fail-open only for non-sensitive, non-billable operations.
  */
 
 import { prisma } from "@/lib/prisma";
@@ -25,6 +25,7 @@ export async function checkRateLimitDb(
   key: string,
   max: number,
   windowMs: number,
+  options: { failOpen?: boolean } = {},
 ): Promise<boolean> {
   const now = new Date();
   try {
@@ -63,10 +64,8 @@ export async function checkRateLimitDb(
 
     return result;
   } catch (err) {
-    // Fail-open: if DB is unavailable, allow the request rather than blocking all logins.
-    // This is a deliberate trade-off — log it so the team knows the limiter is down.
-    console.error("[RateLimit] DB error, failing open:", err instanceof Error ? err.message : err);
-    return true;
+    console.error("[RateLimit] DB error:", err instanceof Error ? err.message : "unknown");
+    return options.failOpen === true;
   }
 }
 

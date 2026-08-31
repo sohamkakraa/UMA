@@ -213,7 +213,7 @@ export default function DashboardScreen() {
           <View style={styles.sectionHeader}>
             <Activity size={20} color={theme.accent} />
             <Text style={[styles.sectionTitle, { color: theme.fg, marginLeft: spacing.md }]}>
-              Today's Activity
+              Today’s Activity
             </Text>
           </View>
           <Text style={[styles.emptyHint, { color: theme.muted, paddingVertical: spacing.sm }]}>

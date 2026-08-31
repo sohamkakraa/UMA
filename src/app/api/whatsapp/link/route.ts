@@ -14,6 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { sendOtpMessage, isWhatsAppConfigured } from "@/lib/whatsapp/client";
 import { normalizeWhatsAppTo } from "@/lib/whatsapp/phone";
 import { checkRateLimitDb } from "@/lib/auth/otpRateLimitDb";
+import { hasTrustedMutationOrigin } from "@/lib/server/requestSecurity";
 
 export const runtime = "nodejs";
 
@@ -35,11 +36,18 @@ const VerifySchema = z.object({
     .min(10)
     .max(20)
     .transform((v) => v.replace(/[^0-9+]/g, "")),
-  code: z.string().length(6),
+  code: z.string().regex(/^\d{6}$/),
 });
+
+function challengeKey(userId: string, normalizedPhone: string): string {
+  return `wa:${userId}:${hashCode(normalizedPhone)}`;
+}
 
 /** Step 1: Send OTP via WhatsApp. */
 export async function POST(req: NextRequest) {
+  if (!hasTrustedMutationOrigin(req)) {
+    return NextResponse.json({ error: "Cross-site request blocked." }, { status: 403 });
+  }
   if (!isWhatsAppConfigured()) {
     return NextResponse.json({ error: "WhatsApp is not configured on this server." }, { status: 503 });
   }
@@ -71,23 +79,19 @@ export async function POST(req: NextRequest) {
   const codeHash = hashCode(code);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      whatsappPhone: normalized,
-      whatsappVerified: false,
-    },
+  await prisma.otpChallenge.deleteMany({
+    where: { lookupKey: { startsWith: `wa:${userId}:` } },
   });
-
-  await prisma.otpChallenge.upsert({
-    where: { lookupKey: `wa:${userId}` },
-    update: { codeHash, expiresAt },
-    create: { lookupKey: `wa:${userId}`, codeHash, expiresAt },
+  await prisma.otpChallenge.create({
+    data: { lookupKey: challengeKey(userId, normalized), codeHash, expiresAt },
   });
 
   try {
     await sendOtpMessage(normalized, code);
   } catch (err) {
+    await prisma.otpChallenge
+      .delete({ where: { lookupKey: challengeKey(userId, normalized) } })
+      .catch(() => undefined);
     // VULN-009/012: Log error message only (no stack traces or token details)
     console.error("[WhatsApp link] Failed to send OTP:", err instanceof Error ? err.message : "unknown");
     return NextResponse.json(
@@ -105,6 +109,9 @@ export async function POST(req: NextRequest) {
 
 /** Step 2: Verify OTP. */
 export async function PUT(req: NextRequest) {
+  if (!hasTrustedMutationOrigin(req)) {
+    return NextResponse.json({ error: "Cross-site request blocked." }, { status: 403 });
+  }
   const userId = await requireUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -128,7 +135,7 @@ export async function PUT(req: NextRequest) {
   }
 
   const challenge = await prisma.otpChallenge.findUnique({
-    where: { lookupKey: `wa:${userId}` },
+    where: { lookupKey: challengeKey(userId, normalized) },
   });
 
   if (!challenge || challenge.expiresAt < new Date()) {
@@ -141,7 +148,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Incorrect code." }, { status: 403 });
   }
 
-  await prisma.otpChallenge.delete({ where: { lookupKey: `wa:${userId}` } });
+  await prisma.otpChallenge.delete({ where: { lookupKey: challengeKey(userId, normalized) } });
 
   await prisma.user.update({
     where: { id: userId },
@@ -152,7 +159,10 @@ export async function PUT(req: NextRequest) {
 }
 
 /** Unlink WhatsApp. */
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
+  if (!hasTrustedMutationOrigin(req)) {
+    return NextResponse.json({ error: "Cross-site request blocked." }, { status: 403 });
+  }
   const userId = await requireUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

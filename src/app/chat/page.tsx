@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/Input";
 import { AppTopNav } from "@/components/nav/AppTopNav";
 import { ChatMarkdown } from "@/components/chat/ChatMarkdown";
 import { ThreadSidebar, type ThreadSummary } from "@/components/chat/ThreadSidebar";
+import { BETA_FEATURES } from "@/lib/features";
 
 type Msg = {
   id: string;
@@ -320,7 +321,7 @@ export default function ChatPage() {
   );
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-dvh flex-col">
       <AppTopNav fixed />
       <div className="flex flex-1 overflow-hidden pt-[57px]">
         <ThreadSidebar
@@ -353,17 +354,18 @@ export default function ChatPage() {
                 {activeThread?.title?.trim() || "UMA chat"}
               </h1>
               {activeThread ? (
-                <p className="text-[11px] mv-muted">
-                  Synced with WhatsApp · what you write here also reaches your WhatsApp thread.
+                <p className="text-sm mv-muted">
+                  {BETA_FEATURES.whatsapp
+                    ? "Synced with your linked WhatsApp conversation."
+                    : "Saved securely to your UMA beta account."}
                 </p>
               ) : (
-                <p className="text-[11px] mv-muted">Pick a chat or start a new one.</p>
+                <p className="text-sm mv-muted">Pick a chat or start a new one.</p>
               )}
             </div>
-            {activeThread ? (
+            {BETA_FEATURES.whatsapp && activeThread ? (
               <span
-                className="hidden items-center gap-1 rounded-full border border-[#25D366]/30 bg-[#25D366]/10 px-2 py-0.5 text-[10px] font-medium md:inline-flex"
-                style={{ color: "#25D366" }}
+                className="hidden min-h-11 items-center gap-1 rounded-full border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 text-sm font-medium text-[var(--accent)] md:inline-flex"
                 title="This conversation is mirrored on WhatsApp"
               >
                 <Smartphone className="h-3 w-3" />
@@ -381,7 +383,12 @@ export default function ChatPage() {
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading messages…
               </div>
             ) : null}
-            <div className="mx-auto flex max-w-2xl flex-col gap-3">
+            <div
+              className="mx-auto flex max-w-2xl flex-col gap-3"
+              role="log"
+              aria-live="polite"
+              aria-label="Conversation messages"
+            >
               {messages.map((m) => (
                 <MessageBubble key={m.id} msg={m} />
               ))}
@@ -398,7 +405,7 @@ export default function ChatPage() {
               className="shrink-0 border-t border-[var(--border)] bg-[var(--panel)]/40 p-3 sm:p-4"
             >
               {error ? (
-                <p className="mb-2 rounded-xl border border-red-500/30 bg-red-500/8 px-3 py-2 text-xs text-red-400">
+                <p role="alert" className="mb-2 rounded-xl border border-[var(--accent-2)]/30 bg-[var(--accent-2)]/10 px-3 py-2 text-sm text-[var(--fg)]">
                   {error}
                 </p>
               ) : null}
@@ -470,8 +477,9 @@ function EmptyState({ onStart }: { onStart: () => void }) {
     <div className="mx-auto mt-10 max-w-md text-center">
       <h2 className="text-lg font-semibold text-[var(--fg)]">Start a chat with UMA</h2>
       <p className="mt-2 text-sm mv-muted">
-        Ask about your reports, log a dose, or set a reminder. Anything you say here also reaches your
-        WhatsApp thread, and what you write on WhatsApp shows up here.
+        {BETA_FEATURES.whatsapp
+          ? "Ask about your reports, log a dose, or set a reminder. Your linked WhatsApp conversation appears here too."
+          : "Ask about your synthetic reports, find a stored value, or log a demo dose. UMA does not diagnose or replace your care team."}
       </p>
       <Button type="button" className="mt-4" onClick={onStart}>
         New chat

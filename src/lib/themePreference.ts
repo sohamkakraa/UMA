@@ -38,7 +38,9 @@ export const THEME_BOOT_SCRIPT = `(function(){
   var d=document.documentElement;
   var pref="system";
   try{
-    var raw=localStorage.getItem("mv_patient_store_v1");
+    var owner=localStorage.getItem("mv_patient_store_owner_v1");
+    var key=owner?"mv_patient_store_v1:"+encodeURIComponent(owner):"mv_patient_store_v1:guest";
+    var raw=localStorage.getItem(key);
     if(raw){
       var j=JSON.parse(raw);
       var t=j&&j.preferences&&j.preferences.theme;

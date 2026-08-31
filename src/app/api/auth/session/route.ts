@@ -15,11 +15,15 @@ export async function GET() {
     if (!user) {
       return NextResponse.json({ ok: false, error: "Account not found." }, { status: 401 });
     }
-    return NextResponse.json({
-      ok: true,
-      email: user.email ?? null,
-      phoneE164: user.phoneE164 ?? null,
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        userId: user.id,
+        email: user.email ?? null,
+        phoneE164: user.phoneE164 ?? null,
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch {
     return NextResponse.json({ ok: false, error: "Database unavailable." }, { status: 503 });
   }

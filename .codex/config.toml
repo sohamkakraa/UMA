@@ -1,0 +1,6 @@
+[mcp_servers.prism]
+args = ["/Users/soham.kakra/.prism/lib/mcp_server.py"]
+command = "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+
+[mcp_servers.prism.env]
+PRISM_PROJECT_ID = "f30901d75495"

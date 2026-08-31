@@ -30,9 +30,19 @@ export const ARJUN_FIXTURE = {
   updatedAtISO: new Date().toISOString(),
 };
 
-export async function seedPatientStore(page: Page, fixture = ARJUN_FIXTURE): Promise<void> {
-  await page.evaluate((data) => {
-    localStorage.setItem("mv_patient_store_v1", JSON.stringify(data));
+export async function seedPatientStore(page: Page, fixture: unknown = ARJUN_FIXTURE): Promise<void> {
+  await page.evaluate(async (data) => {
+    let owner = localStorage.getItem("mv_patient_store_owner_v1");
+    if (!owner) {
+      const response = await fetch("/api/auth/session", { cache: "no-store" });
+      const session = (await response.json()) as { ok?: boolean; userId?: string };
+      if (!response.ok || !session.ok || !session.userId) {
+        throw new Error("Patient store owner was not initialized after sign-in.");
+      }
+      owner = session.userId;
+      localStorage.setItem("mv_patient_store_owner_v1", owner);
+    }
+    localStorage.setItem(`mv_patient_store_v1:${encodeURIComponent(owner)}`, JSON.stringify(data));
   }, fixture);
   await page.reload();
   await page.waitForTimeout(1500);

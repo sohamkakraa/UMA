@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Menu, UserRound, X } from "lucide-react";
 import { cn } from "@/components/ui/cn";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { UmaLogo } from "@/components/branding/UmaLogo";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { FamilySwitcher } from "@/components/family/FamilySwitcher";
@@ -60,33 +59,26 @@ export function AppTopNav({
           </Link>
         </div>
 
-        {/* Tab group */}
-        <div className="flex min-w-0 justify-center">
-          <Tabs value={activeHref} className="w-full max-w-[240px]">
-            <TabsList
-              className="grid w-full"
-              style={{ gridTemplateColumns: `repeat(${NAV_ITEMS.length}, 1fr)` }}
-            >
-              {NAV_ITEMS.map((item) =>
-                item.disabled ? (
-                  <span
-                    key={item.href}
-                    role="tab"
-                    aria-disabled="true"
-                    title={item.tooltip}
-                    className="inline-flex items-center justify-center rounded-xl px-2 py-1.5 text-sm text-[var(--muted)] opacity-50 cursor-not-allowed"
-                  >
-                    {item.label}
-                  </span>
-                ) : (
-                  <TabsTrigger key={item.href} value={item.href} asChild>
-                    <Link href={item.href}>{item.label}</Link>
-                  </TabsTrigger>
-                ),
-              )}
-            </TabsList>
-          </Tabs>
-        </div>
+        <nav aria-label="Primary" className="flex min-w-0 justify-center">
+          <div
+            className="grid w-full max-w-[240px] rounded-2xl bg-[var(--panel-2)] p-1"
+            style={{ gridTemplateColumns: `repeat(${NAV_ITEMS.length}, 1fr)` }}
+          >
+            {NAV_ITEMS.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={activeHref === item.href ? "page" : undefined}
+                className={cn(
+                  "inline-flex min-h-11 items-center justify-center rounded-xl px-3 text-sm font-medium text-[var(--muted)] transition-colors",
+                  activeHref === item.href && "bg-[var(--panel)] text-[var(--fg)] shadow-sm",
+                )}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        </nav>
 
         {/* Right-side controls */}
         <div className="flex min-w-0 items-center justify-end gap-2">

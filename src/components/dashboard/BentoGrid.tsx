@@ -15,13 +15,11 @@
  *   flat border + hover background, no shadows.
  */
 
-import { useRef } from "react";
 import { Reorder, useDragControls, motion } from "framer-motion";
 import { GripVertical, X, ChevronDown } from "lucide-react";
 import type { DashboardWidgetId, BentoSize } from "@/lib/types";
 import {
   BENTO_COL_SPAN,
-  BENTO_ROW_SPAN,
   DASHBOARD_WIDGET_META,
 } from "@/lib/dashboardLayout";
 import type { ReactNode } from "react";
@@ -60,11 +58,10 @@ export function BentoGrid({
   onRemove?: (id: DashboardWidgetId) => void;
   onSizeChange?: (id: DashboardWidgetId, size: BentoSize) => void;
 }) {
-  const reducedMotion = useRef(
+  const reducedMotion =
     typeof window !== "undefined"
       ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      : false,
-  );
+      : false;
 
   if (editMode) {
     return (
@@ -95,7 +92,7 @@ export function BentoGrid({
           key={item.id}
           item={item}
           index={index}
-          reducedMotion={reducedMotion.current}
+          reducedMotion={reducedMotion}
         />
       ))}
     </div>

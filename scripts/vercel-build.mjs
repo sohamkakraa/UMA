@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 /**
- * Vercel build: prisma migrate → prisma generate → next build.
+ * Vercel build: optional controlled migration → prisma generate → next build.
  * Exit 1 = one of those steps failed; scroll up in the Vercel log for Prisma/Next output
  * immediately above the matching "[vercel-build] ── … ──" banner.
+ *
+ * Database migrations are intentionally opt-in. Preview builds must use a
+ * disposable database that CI migrated before deployment; ordinary builds
+ * must never mutate a shared database as a side effect.
  *
  * Use stdout (console.log) for routine messages so Vercel does not mark the build as having "errors".
  */
@@ -37,6 +41,7 @@ console.log("\n[vercel-build] Diagnostic (no secret values logged):");
 console.log(`  cwd: ${process.cwd()}`);
 console.log(`  node: ${process.version}`);
 console.log(`  VERCEL_ENV: ${process.env.VERCEL_ENV ?? "(unset)"}`);
+console.log(`  RUN_DB_MIGRATIONS: ${process.env.RUN_DB_MIGRATIONS === "1" ? "enabled" : "disabled"}`);
 console.log(`  DATABASE_URL length: ${db.length}`);
 console.log(
   `  DIRECT_URL: ${dir ? `set, length ${dir.length}` : "unset"}${!directUrlBeforeDefault && dir ? " (copied from DATABASE_URL)" : ""}`,
@@ -107,7 +112,20 @@ function runMigrate(maxAttempts = 3, delayMs = 6000) {
   }
 }
 
-runMigrate();
+if (process.env.RUN_DB_MIGRATIONS === "1") {
+  if (process.env.VERCEL_ENV === "preview") {
+    console.error(
+      "[vercel-build] Refusing to run migrations during a Vercel Preview build. " +
+      "Migrate the isolated preview database in CI before deploying.",
+    );
+    process.exit(1);
+  }
+  runMigrate();
+} else {
+  console.log(
+    "\n[vercel-build] Skipping database migrations. Run the controlled db:migrate release step before production promotion.\n",
+  );
+}
 run("prisma generate", prismaSpawn(["generate"]));
 run("next build", nextSpawn(["build"]));
 

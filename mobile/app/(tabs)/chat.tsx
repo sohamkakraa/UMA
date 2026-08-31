@@ -14,7 +14,8 @@ import { useTheme, spacing, radius } from '@/lib/theme';
 import TextInput from '@/components/ui/TextInput';
 import Button from '@/components/ui/Button';
 import Card from '@/components/ui/Card';
-import { Send, Paperclip, MessageCircle } from 'lucide-react-native';
+import { MessageCircle } from 'lucide-react-native';
+import { callCloudAI } from '@/lib/ai/cloud';
 
 interface Message {
   id: string;
@@ -29,6 +30,17 @@ const SUGGESTION_CHIPS = [
   'What belongs in my health record?',
   'Where do I upload a PDF?',
 ];
+
+let messageSequence = 0;
+function createMessage(type: Message['type'], text: string): Message {
+  messageSequence += 1;
+  return {
+    id: `${type}-${Date.now()}-${messageSequence}`,
+    type,
+    text,
+    timestamp: new Date(),
+  };
+}
 
 export default function ChatScreen() {
   const theme = useTheme();
@@ -45,31 +57,34 @@ export default function ChatScreen() {
     }
   }, [messages]);
 
-  const handleSendMessage = (text: string = input) => {
+  const handleSendMessage = async (text: string = input) => {
     if (!text.trim()) return;
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      type: 'user',
-      text: text.trim(),
-      timestamp: new Date(),
-    };
+    const userMessage = createMessage('user', text.trim());
 
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setLoading(true);
 
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        type: 'assistant',
-        text:
-          'UMA chat is not wired to your full records in this build yet. For personal numbers or medication lists, use the web app after you sign in and add your files. I can still help with general questions—what would you like to know?',
-        timestamp: new Date(),
-      };
+    try {
+      const answer = await callCloudAI({
+        systemPrompt: '',
+        userMessage: userMessage.text,
+        conversationHistory: messages.map((message) => ({
+          role: message.type === 'user' ? 'user' : 'assistant',
+          content: message.text,
+        })),
+      });
+      const assistantMessage = createMessage('assistant', answer);
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (cause) {
+      const message = cause instanceof Error
+        ? cause.message
+        : 'UMA chat is unavailable. Try again later.';
+      setMessages((prev) => [...prev, createMessage('assistant', message)]);
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
@@ -101,7 +116,7 @@ export default function ChatScreen() {
             {item.text}
           </Text>
           {item.type === 'assistant' && (
-            <Text style={[styles.disclaimer, { color: theme.muted, marginTop: spacing.sm }]}>
+            <Text style={[styles.disclaimerText, { color: theme.muted, marginTop: spacing.sm }]}>
               Not medical advice
             </Text>
           )}
@@ -117,7 +132,7 @@ export default function ChatScreen() {
       <View style={[styles.emptyState, { width: isTablet ? '60%' : '100%' }]}>
         <MessageCircle size={48} color={theme.accent} strokeWidth={1.5} />
         <Text style={[styles.emptyTitle, { color: theme.fg, marginTop: spacing.lg }]}>
-          Hello, I'm Uma
+          Hello, I’m UMA
         </Text>
         <Text style={[styles.emptySubtitle, { color: theme.muted, marginTop: spacing.sm }]}>
           Your personal health companion. Ask me anything about your health records and medications.
@@ -130,7 +145,7 @@ export default function ChatScreen() {
               title={chip}
               variant="outline"
               size="sm"
-              onPress={() => handleSendMessage(chip)}
+              onPress={() => { void handleSendMessage(chip); }}
               style={{ marginBottom: spacing.md }}
             />
           ))}
@@ -187,35 +202,31 @@ export default function ChatScreen() {
         >
           <View style={styles.inputRow}>
             <Button
-              title=""
+              title="Attach"
               onPress={() => {}}
               variant="ghost"
               size="sm"
               style={{ flex: 0, paddingHorizontal: spacing.sm }}
-            >
-              <Paperclip size={20} color={theme.accent} />
-            </Button>
+            />
 
             <TextInput
               placeholder="Ask me anything..."
               value={input}
               onChangeText={setInput}
               editable={!loading}
-              onSubmitEditing={() => handleSendMessage()}
+              onSubmitEditing={() => { void handleSendMessage(); }}
               returnKeyType="send"
               style={{ flex: 1, marginHorizontal: spacing.sm }}
             />
 
             <Button
-              title=""
-              onPress={() => handleSendMessage()}
+              title="Send"
+              onPress={() => { void handleSendMessage(); }}
               disabled={!input.trim() || loading}
               variant="ghost"
               size="sm"
               style={{ flex: 0, paddingHorizontal: spacing.sm }}
-            >
-              <Send size={20} color={theme.accent} />
-            </Button>
+            />
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -270,8 +281,14 @@ const styles = StyleSheet.create({
     fontFamily: 'space-grotesk',
   },
   disclaimer: {
-    fontSize: 11,
+    borderTopWidth: 1,
+    paddingTop: spacing.md,
+  },
+  disclaimerText: {
+    fontSize: 14,
     fontFamily: 'space-grotesk',
+    lineHeight: 20,
+    textAlign: 'center',
   },
   loadingIndicator: {
     flexDirection: 'row',

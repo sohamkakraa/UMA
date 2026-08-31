@@ -6,13 +6,13 @@ export const elderly = {
 };
 
 export const test = base.extend({
-  page: async ({ page }, use) => {
+  page: async ({ page }, provide) => {
     // Inject 200% font scale (16px → 32px root font)
     await page.addInitScript(() => {
       document.documentElement.style.fontSize = "32px";
     });
     // Emulate prefers-reduced-motion
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await use(page);
+    await provide(page);
   },
 });

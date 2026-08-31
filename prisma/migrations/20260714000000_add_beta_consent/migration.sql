@@ -1,0 +1,3 @@
+ALTER TABLE "User"
+  ADD COLUMN IF NOT EXISTS "terms_accepted_at" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "terms_version" TEXT;

@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
+
 import "@testing-library/jest-dom";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { DashboardHealthLogSection } from "../DashboardHealthLogSection";
 import type { PatientStore } from "@/lib/types";
 import { defaultHealthLogs } from "@/lib/healthLogs";
@@ -63,10 +65,10 @@ function makeStore(overrides?: Partial<PatientStore>): PatientStore {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("DashboardHealthLogSection", () => {
-  let handleChange: ReturnType<typeof vi.fn>;
+  let handleChange: Mock<(next: PatientStore) => void>;
 
   beforeEach(() => {
-    handleChange = vi.fn();
+    handleChange = vi.fn<(next: PatientStore) => void>();
   });
 
   it("empty BP submit shows systolic and diastolic error messages", async () => {

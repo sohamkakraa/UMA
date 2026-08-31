@@ -25,6 +25,8 @@ import { getAnthropicForUser } from "@/lib/server/llmClient";
 import { prisma } from "@/lib/prisma";
 import { parsePatientStoreJson } from "@/lib/patientStoreApi";
 import { StorePatchSchema, StorePatchOpSchema, type StorePatchOp } from "@/lib/intent/storePatch";
+import { checkRateLimitDb } from "@/lib/auth/otpRateLimitDb";
+import { hasTrustedMutationOrigin } from "@/lib/server/requestSecurity";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -138,6 +140,9 @@ function op(
 
 // ── Route ────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
+  if (!hasTrustedMutationOrigin(req)) {
+    return NextResponse.json({ ok: false, error: "Cross-site request blocked." }, { status: 403 });
+  }
   // Fixed VULN-001: load the patient store from the database using the
   // authenticated userId. The client must NOT supply the store — a malicious
   // client could inject adversarial strings into the LLM system prompt via
@@ -146,8 +151,17 @@ export async function POST(req: NextRequest) {
   if (!userId) {
     return NextResponse.json({ ok: false, error: "Not signed in." }, { status: 401 });
   }
+  if (!(await checkRateLimitDb(`tidy:${userId}`, 12, 60 * 60 * 1000))) {
+    return NextResponse.json(
+      { ok: false, error: "Tidy has reached its hourly limit. Try again later." },
+      { status: 429 },
+    );
+  }
 
-  const debugMode = req.nextUrl.searchParams.get("debug") === "1";
+  const debugMode =
+    process.env.NODE_ENV !== "production" &&
+    process.env.ENABLE_TIDY_DEBUG === "1" &&
+    req.nextUrl.searchParams.get("debug") === "1";
 
   const dbRecord = await prisma.patientRecord.findUnique({ where: { userId } });
   if (!dbRecord?.data) {

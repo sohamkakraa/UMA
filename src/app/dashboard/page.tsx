@@ -82,7 +82,7 @@ import {
   mergeFacilityQuickPick,
   normPickKey,
 } from "@/lib/providerQuickPick";
-import { getCanonicalRefRange, interpretLab } from "@/lib/labInterpret";
+import { interpretLab, parseReferenceSpan } from "@/lib/labInterpret";
 import {
   Activity,
   AlertTriangle,
@@ -100,10 +100,6 @@ import {
   Droplets,
   Stethoscope,
   ShieldAlert,
-  CircleDot,
-  ArrowUpRight,
-  CheckCircle2,
-  Layers,
   Scale,
   FlaskConical,
   CheckCheck,
@@ -1037,6 +1033,7 @@ function DashboardInner() {
 
   const flaggedLabs = useMemo(() => {
     return recentLabs.filter(l => {
+      if (!l.refRange?.trim()) return false;
       const it = interpretLab(l, lex);
       return it.flag === "low" || it.flag === "high";
     });
@@ -1268,67 +1265,35 @@ function DashboardInner() {
   const healthSnapshot = useMemo(() => {
     if (!store.labs.length) return null;
 
-    // Get latest value per canonical metric name
-    const latestByName: Record<string, { value: number; date: string; unit?: string }> = {};
+    // Use only the reference range printed on the source report for safety.
+    const latestByName: Record<string, (typeof store.labs)[number]> = {};
     [...store.labs]
       .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
       .forEach(l => {
-        const val = parseFloat(String(l.value).replace(/[^\d.]/g, ""));
-        if (!isNaN(val) && l.date) {
-          latestByName[resolveCanonicalLabName(l.name, lex)] = { value: val, date: l.date, unit: l.unit };
-        }
+        if (l.date) latestByName[resolveCanonicalLabName(l.name, lex)] = l;
       });
 
-    const concerns: Array<{ name: string; value: number; unit?: string; status: "critical" | "warning"; direction: "high" | "low"; friendlyName: string; why?: string }> = [];
-    const improving: Array<{ name: string; friendlyName: string; direction: "improving" | "worsening" }> = [];
+    const concerns: Array<{ name: string; value: number; unit?: string; direction: "high" | "low"; friendlyName: string; why?: string }> = [];
 
-    Object.entries(latestByName).forEach(([name, { value }]) => {
-      const ref = getCanonicalRefRange(name);
-      if (!ref) return;
-      const norm = (value - ref.low) / (ref.high - ref.low);
+    Object.entries(latestByName).forEach(([name, lab]) => {
+      if (!lab.refRange?.trim()) return;
+      const interpretation = interpretLab(lab, lex);
+      if (
+        interpretation.numericValue == null ||
+        (interpretation.flag !== "high" && interpretation.flag !== "low")
+      ) return;
       const meta = getLabMeta(name);
-      if (norm < -0.1 || norm > 1.1) {
-        const direction = norm < 0 ? "low" : "high";
-        const severity = norm < -0.5 || norm > 1.5 ? "critical" : "warning";
-        concerns.push({
-          name, value, unit: ref.unit, status: severity, direction,
-          friendlyName: meta?.friendlyName ?? name,
-          why: meta?.whyItMatters
-        });
-      }
+      concerns.push({
+        name,
+        value: interpretation.numericValue,
+        unit: interpretation.displayUnit,
+        direction: interpretation.flag,
+        friendlyName: meta?.friendlyName ?? name,
+        why: meta?.whyItMatters,
+      });
     });
 
-    // Detect trends
-    const byName: Record<string, Array<{ value: number; date: string }>> = {};
-    store.labs.forEach(l => {
-      const val = parseFloat(String(l.value).replace(/[^\d.]/g, ""));
-      if (!isNaN(val) && l.date) {
-        const cn = resolveCanonicalLabName(l.name, lex);
-        (byName[cn] ??= []).push({ value: val, date: l.date });
-      }
-    });
-    Object.entries(byName).forEach(([name, pts]) => {
-      if (pts.length < 2) return;
-      const sorted = pts.sort((a,b) => a.date.localeCompare(b.date));
-      const oldest = sorted[0].value, latest = sorted[sorted.length-1].value;
-      if (oldest === 0) return;
-      const ref = getCanonicalRefRange(name);
-      if (!ref) return;
-      const changePct = (latest - oldest) / oldest;
-      const meta = getLabMeta(name);
-      const latestNorm = (latest - ref.low) / (ref.high - ref.low);
-      const oldestNorm = (oldest - ref.low) / (ref.high - ref.low);
-      // Improving = was out of range, now closer to normal
-      const wasAbnormal = oldestNorm < -0.1 || oldestNorm > 1.1;
-      const isNowBetter = Math.abs(latestNorm - 0.5) < Math.abs(oldestNorm - 0.5);
-      if (wasAbnormal && isNowBetter && Math.abs(changePct) > 0.1) {
-        improving.push({ name, friendlyName: meta?.friendlyName ?? name, direction: "improving" });
-      }
-    });
-
-    concerns.sort((a,b) => (b.status === "critical" ? 1 : 0) - (a.status === "critical" ? 1 : 0));
-
-    return { concerns: concerns.slice(0, 6), improving: improving.slice(0, 3), total: Object.keys(latestByName).length };
+    return { concerns: concerns.slice(0, 6), improving: [], total: Object.keys(latestByName).length };
   }, [store.labs, lex]);
 
   /** Plain-English health narrative synthesising all available data. */
@@ -1368,23 +1333,17 @@ function DashboardInner() {
 
     // Lab highlights (only if we have labs)
     if (hasLabs && healthSnapshot) {
-      const critical = healthSnapshot.concerns.filter(c => c.status === "critical");
-      const warnings = healthSnapshot.concerns.filter(c => c.status === "warning");
-      const improving = healthSnapshot.improving;
+      const outsideReportRange = healthSnapshot.concerns;
 
-      if (critical.length > 0) {
-        const names = critical.map(c => c.friendlyName).join(", ");
-        parts.push(`${names} ${critical.length === 1 ? "is" : "are"} significantly outside normal range — worth discussing with your doctor.`);
-      } else if (warnings.length > 0) {
-        const names = warnings.slice(0, 2).map(c => c.friendlyName).join(" and ");
-        parts.push(`${names} ${warnings.length === 1 ? "is" : "are"} slightly off — worth keeping an eye on.`);
+      if (outsideReportRange.length > 0) {
+        const names = outsideReportRange.slice(0, 2).map(c => c.friendlyName).join(" and ");
+        parts.push(
+          `${names} ${outsideReportRange.length === 1 ? "is" : "are"} outside the range printed on the source report. Check the report and discuss it with your care team.`,
+        );
       } else {
-        parts.push("All tracked lab values are within normal range.");
-      }
-
-      if (improving.length > 0) {
-        const names = improving.map(i => i.friendlyName).join(", ");
-        parts.push(`${names} ${improving.length === 1 ? "is" : "are"} trending in the right direction.`);
+        parts.push(
+          "UMA did not find a value outside a readable range printed on the source reports. This is not a clinical interpretation.",
+        );
       }
     }
 
@@ -1457,6 +1416,7 @@ function DashboardInner() {
       <AppTopNav />
 
       <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-6 bento-page-padding py-8 pb-12 no-print">
+        <h1 className="sr-only">Your health dashboard</h1>
         {activeMember && (
           <div className="flex items-center gap-3 rounded-2xl border border-[var(--accent)]/30 bg-[var(--accent)]/8 px-4 py-3">
             <span className="text-xl" aria-hidden>👤</span>
@@ -1494,6 +1454,11 @@ function DashboardInner() {
               <p className="mt-2 text-sm mv-muted max-w-xl leading-relaxed">
                 {healthNarrative ?? "Upload a health report to get your personalised health summary."}
               </p>
+              {healthNarrative ? (
+                <p className="mt-2 text-sm font-medium text-[var(--muted)]">
+                  Not medical advice — check source reports and talk to your care team before acting.
+                </p>
+              ) : null}
               <div className="mt-4 flex flex-wrap gap-2">
                 {/* Hide the conditions / allergies pills entirely when the user
                     hasn't saved any. Empty-state copy ("No conditions") was
@@ -1554,30 +1519,15 @@ function DashboardInner() {
                     <div className="space-y-2">
                       <div className="flex flex-wrap gap-2">
                         {healthSnapshot.concerns.map((c, i) => (
-                          <div key={i} className={[
-                            "inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-medium",
-                            c.status === "critical"
-                              ? "bg-rose-500/12 text-rose-600 border border-rose-500/25"
-                              : "bg-amber-500/12 text-amber-600 border border-amber-500/25"
-                          ].join(" ")}>
-                            {c.status === "critical" ? <CircleDot className="h-3 w-3 text-rose-500 shrink-0" /> : <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />}
+                          <div
+                            key={i}
+                            className="inline-flex items-center gap-2 rounded-xl border border-[var(--accent-2)]/30 bg-[var(--accent-2)]/10 px-3 py-2 text-sm font-medium text-[var(--fg)]"
+                          >
+                            <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--accent-2)]" />
                             <span>{c.friendlyName}</span>
-                            <span className="opacity-70">{c.direction === "high" ? "↑ high" : "↓ low"}</span>
-                          </div>
-                        ))}
-                      </div>
-                      {/* Concern badges are self-explanatory — no extra warning needed */}
-                    </div>
-                  )}
-                  {healthSnapshot.improving.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold text-[var(--fg)]">Improving</p>
-                      <div className="flex flex-wrap gap-2">
-                        {healthSnapshot.improving.map((item, i) => (
-                          <div key={i} className="inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-medium bg-emerald-500/12 text-emerald-600 border border-emerald-500/25">
-                            <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
-                            <span>{item.friendlyName}</span>
-                            <span className="opacity-70"><ArrowUpRight className="inline h-3 w-3" /> trending better</span>
+                            <span className="text-[var(--muted)]">
+                              {c.direction === "high" ? "Above report range" : "Below report range"}
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -1833,21 +1783,15 @@ function DashboardInner() {
                           </p>
                           {(() => {
                             const rems = remindersByMedKey[m.name.trim().toLowerCase()] ?? [];
-                            const isAuto = m.trackingMode === "auto";
                             const showCategory =
                               m.medicationProductCategory && m.medicationProductCategory !== "unspecified";
-                            if (!showCategory && !isAuto && rems.length === 0) return null;
+                            if (!showCategory && rems.length === 0) return null;
                             return (
                               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                                 {showCategory ? (
                                   <Badge className="text-[10px] py-0.5">
                                     {medicationProductCategoryLabel(m.medicationProductCategory)}
                                   </Badge>
-                                ) : null}
-                                {isAuto ? (
-                                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/8 px-2 py-0.5 text-[10px] text-emerald-400">
-                                    ⚡ Auto-tracking
-                                  </span>
                                 ) : null}
                                 {rems.slice(0, 2).map((r) => (
                                   <span
@@ -1886,38 +1830,11 @@ function DashboardInner() {
                       </div>
                       {isOpen && (
                         <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 text-xs space-y-0">
-                          {/* ── Section 1: Tracking toggle + Stock ── */}
+                          {/* ── Section 1: Confirmation policy + Stock ── */}
                           <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const next = (m.trackingMode ?? "auto") === "auto" ? "manual" : "auto";
-                                updateMed(i, { trackingMode: next });
-                                setRecordNotice(
-                                  next === "auto"
-                                    ? `Auto mode — ${m.name} marked taken daily unless you log a miss.`
-                                    : `Manual mode — log each dose yourself.`
-                                );
-                              }}
-                              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1.5 text-xs transition-colors hover:border-[var(--accent)]/40"
-                            >
-                              <span
-                                className={[
-                                  "inline-block h-3 w-6 rounded-full transition-colors relative",
-                                  (m.trackingMode ?? "auto") === "auto"
-                                    ? "bg-[var(--accent)]"
-                                    : "bg-[var(--border)]",
-                                ].join(" ")}
-                              >
-                                <span
-                                  className={[
-                                    "absolute top-0.5 h-2 w-2 rounded-full bg-white transition-[left]",
-                                    (m.trackingMode ?? "auto") === "auto" ? "left-3.5" : "left-0.5",
-                                  ].join(" ")}
-                                />
-                              </span>
-                              {(m.trackingMode ?? "auto") === "auto" ? "Auto-tracking" : "Manual"}
-                            </button>
+                            <p className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--fg)]">
+                              Confirm each dose you take
+                            </p>
                             <div className="flex items-center gap-1.5">
                               <span className="text-[11px] text-[var(--muted)] whitespace-nowrap">Stock left</span>
                               <Input
@@ -2098,13 +2015,13 @@ function DashboardInner() {
           </div>
           );
 
-          widgetNodes.bloodPressure = (store.healthLogs?.bloodPressure?.length ?? 0) > 0
-            ? <DashboardHealthLogSection store={store} onStoreChange={updateStore} variant="bloodPressure" />
-            : null;
+          widgetNodes.bloodPressure = (
+            <DashboardHealthLogSection store={store} onStoreChange={updateStore} variant="bloodPressure" />
+          );
 
-          widgetNodes.sideEffects = (store.healthLogs?.sideEffects?.length ?? 0) > 0
-            ? <DashboardHealthLogSection store={store} onStoreChange={updateStore} variant="sideEffects" />
-            : null;
+          widgetNodes.sideEffects = (
+            <DashboardHealthLogSection store={store} onStoreChange={updateStore} variant="sideEffects" />
+          );
 
           widgetNodes.healthTrends = trendCards.length > 0 ? (
             <HealthTrendsSection
@@ -2123,10 +2040,21 @@ function DashboardInner() {
                 if (!seen.has(canonical)) seen.set(canonical, { lab, canonical });
               }
               return [...seen.values()].map(({ lab, canonical }, idx) => {
-                const ref = getCanonicalRefRange(canonical);
+                const reportRange = parseReferenceSpan(lab.refRange);
                 const rawVal = typeof lab.value === "number" ? lab.value : parseFloat(String(lab.value ?? ""));
-                if (!ref || isNaN(rawVal)) return null;
-                return { lab, canonical, ref, rawVal, color: ["#f59e0b","#ef4444","#8b5cf6","#06b6d4","#ec4899","#f97316"][idx % 6] };
+                if (!reportRange || isNaN(rawVal)) return null;
+                const ref = {
+                  low: reportRange.low,
+                  high: reportRange.high,
+                  unit: lab.unit ?? "",
+                };
+                return {
+                  lab,
+                  canonical,
+                  ref,
+                  rawVal,
+                  color: idx % 2 === 0 ? "var(--accent-2)" : "var(--accent)",
+                };
               }).filter(Boolean) as Array<{ lab: typeof flaggedLabs[0]; canonical: string; ref: { low: number; high: number; unit: string }; rawVal: number; color: string }>;
             })();
             widgetNodes.labs = flaggedGaugeItems.length > 0 ? (
@@ -2171,7 +2099,7 @@ function DashboardInner() {
                 if (!seen.has(canonical)) seen.set(canonical, { lab, canonical });
               }
               return [...seen.values()].map(({ lab, canonical }) => {
-                const ref = getCanonicalRefRange(canonical);
+                const reportRange = parseReferenceSpan(lab.refRange);
                 const rawVal = typeof lab.value === "number" ? lab.value : parseFloat(String(lab.value ?? ""));
                 if (isNaN(rawVal)) return null;
                 const it = interpretLab(lab, lex);
@@ -2182,14 +2110,15 @@ function DashboardInner() {
                   ? new Date(lab.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })
                   : undefined;
                 let rangeBar: ConcerningRangeBar | undefined = undefined;
-                if (ref) {
+                if (reportRange) {
+                  const rangeUnit = lab.unit ?? "";
                   rangeBar = {
-                    min: ref.low,
-                    max: ref.high,
+                    min: reportRange.low,
+                    max: reportRange.high,
                     current: rawVal,
-                    lowLabel: `<${Number.isInteger(ref.low) ? ref.low : ref.low.toFixed(1)} ${ref.unit}`,
-                    midLabel: "Normal",
-                    highLabel: `>${Number.isInteger(ref.high) ? ref.high : ref.high.toFixed(1)} ${ref.unit}`,
+                    lowLabel: `<${Number.isInteger(reportRange.low) ? reportRange.low : reportRange.low.toFixed(1)} ${rangeUnit}`,
+                    midLabel: "Report range",
+                    highLabel: `>${Number.isInteger(reportRange.high) ? reportRange.high : reportRange.high.toFixed(1)} ${rangeUnit}`,
                   };
                 }
                 return { canonical, status, valueStr, dateStr, rangeBar };
@@ -2212,10 +2141,10 @@ function DashboardInner() {
                 {/* Section heading */}
                 <div className="mb-5">
                   <h2 className="mv-title text-xl" style={{ color: "var(--fg)" }}>
-                    Concerning items
+                    Items to review
                   </h2>
                   <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-                    Flagged labs and metrics worth discussing with your doctor.
+                    Values outside a source report range, plus general measurements you may want to discuss.
                   </p>
                 </div>
 

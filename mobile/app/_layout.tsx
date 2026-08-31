@@ -7,6 +7,7 @@ import { useTheme, useThemeStore } from '@/lib/theme';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as SecureStore from 'expo-secure-store';
 import { useAuthStore } from '@/lib/auth';
+import { useStore } from '@/lib/store';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -48,6 +49,12 @@ export default function RootLayout() {
         console.error('Failed to hydrate theme:', error);
       }
 
+      try {
+        await useStore.getState().hydrate();
+      } catch {
+        console.error('Failed to hydrate encrypted patient store.');
+      }
+
       if (fontsLoaded) {
         await SplashScreen.hideAsync();
       }
@@ -60,7 +67,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <StatusBar barStyle={theme.fg === '#151515' ? 'dark-content' : 'light-content'} />
+      <StatusBar style={theme.fg === '#151515' ? 'dark' : 'light'} />
       <Stack
         screenOptions={{
           headerShown: false,

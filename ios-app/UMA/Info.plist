@@ -33,6 +33,10 @@
 	<string>UMA needs camera access to scan medical documents.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>UMA needs access to your photos to let you upload medical documents.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>UMA reads the Health data you choose so you can review it alongside your records.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>UMA writes only the health entries you explicitly ask it to save.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

@@ -29,21 +29,73 @@ import { applyEffectiveThemeToDocument, resolveThemePreference } from "@/lib/the
 import { generateInternalId, registerPrimaryAccount, registerSubProfile, deregisterEntry } from "@/lib/accountRegistry";
 import { interpretLab } from "@/lib/labInterpret";
 
-const KEY = "mv_patient_store_v1";
-const ACCOUNT_INIT = "mv_account_initialized_v1";
+const STORE_KEY_PREFIX = "mv_patient_store_v1";
+const LEGACY_STORE_KEY = STORE_KEY_PREFIX;
+const ACCOUNT_INIT_PREFIX = "mv_account_initialized_v1";
+const ACTIVE_OWNER_KEY = "mv_patient_store_owner_v1";
+const LEGACY_QUARANTINE_KEY = "mv_patient_store_legacy_quarantine_v1";
+
+function activeOwnerId(): string | null {
+  if (typeof window === "undefined") return null;
+  const owner = localStorage.getItem(ACTIVE_OWNER_KEY)?.trim();
+  return owner || null;
+}
+
+function patientStoreKey(): string {
+  const owner = activeOwnerId();
+  return owner ? `${STORE_KEY_PREFIX}:${encodeURIComponent(owner)}` : `${STORE_KEY_PREFIX}:guest`;
+}
+
+function accountInitKey(): string {
+  const owner = activeOwnerId();
+  return owner ? `${ACCOUNT_INIT_PREFIX}:${encodeURIComponent(owner)}` : `${ACCOUNT_INIT_PREFIX}:guest`;
+}
+
+/**
+ * Select the signed-in user's browser storage namespace.
+ * Unowned legacy data is quarantined instead of being attached to whichever
+ * account signs in next. Switching identities removes the prior local copy.
+ */
+export function activatePatientStoreOwner(userId: string): void {
+  if (typeof window === "undefined") return;
+  const nextOwner = userId.trim();
+  if (!nextOwner || nextOwner.length > 128) return;
+
+  const previousOwner = activeOwnerId();
+  if (previousOwner && previousOwner !== nextOwner) {
+    localStorage.removeItem(`${STORE_KEY_PREFIX}:${encodeURIComponent(previousOwner)}`);
+    localStorage.removeItem(`${ACCOUNT_INIT_PREFIX}:${encodeURIComponent(previousOwner)}`);
+  }
+
+  const legacy = localStorage.getItem(LEGACY_STORE_KEY);
+  if (legacy && !localStorage.getItem(LEGACY_QUARANTINE_KEY)) {
+    localStorage.setItem(LEGACY_QUARANTINE_KEY, legacy);
+  }
+  localStorage.removeItem(LEGACY_STORE_KEY);
+  localStorage.removeItem(ACCOUNT_INIT_PREFIX);
+  localStorage.setItem(ACTIVE_OWNER_KEY, nextOwner);
+  remoteStoreVersion = null;
+}
 
 let skipNextRemotePush = false;
 let pushDebounce: ReturnType<typeof setTimeout> | null = null;
+let remoteStoreVersion: string | null = null;
 const PUSH_DEBOUNCE_MS = 900;
 
 export function clearLocalPatientStore() {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(KEY);
-  localStorage.removeItem(ACCOUNT_INIT);
+  const sensitiveKeys: string[] = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (key?.startsWith("mv_")) sensitiveKeys.push(key);
+  }
+  sensitiveKeys.forEach((key) => localStorage.removeItem(key));
+  remoteStoreVersion = null;
 }
 
 export async function pushPatientStoreToServer(): Promise<boolean> {
   if (typeof window === "undefined") return false;
+  if (!activeOwnerId()) return false;
   const store = getStore();
   const body = patientStoreForApiPayload(store);
   body.updatedAtISO = new Date().toISOString();
@@ -52,8 +104,16 @@ export async function pushPatientStoreToServer(): Promise<boolean> {
       method: "PUT",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ store: body }),
+      body: JSON.stringify({ store: body, baseVersion: remoteStoreVersion }),
     });
+    const result = (await r.json().catch(() => null)) as {
+      version?: string | null;
+      code?: string;
+    } | null;
+    if (result && "version" in result) remoteStoreVersion = result.version ?? null;
+    if (r.status === 409 && result?.code === "STORE_CONFLICT") {
+      window.dispatchEvent(new CustomEvent("mv-store-conflict"));
+    }
     return r.ok;
   } catch {
     return false;
@@ -111,8 +171,26 @@ export function isStoreSyncing(): boolean {
   return _isSyncing;
 }
 
+async function ensureActiveOwnerFromSession(): Promise<boolean> {
+  if (activeOwnerId()) return true;
+  try {
+    const response = await fetch("/api/auth/session", {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+    const session = (await response.json()) as { ok?: boolean; userId?: string };
+    if (!session.ok || !session.userId) return false;
+    activatePatientStoreOwner(session.userId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function syncPatientStoreWithServer(): Promise<void> {
   if (typeof window === "undefined") return;
+  if (!(await ensureActiveOwnerFromSession())) return;
   _isSyncing = true;
   try {
     window.dispatchEvent(new CustomEvent("mv-store-syncing"));
@@ -131,12 +209,17 @@ export async function syncPatientStoreWithServer(): Promise<void> {
     return;
   }
 
-  const j = (await r.json()) as { ok?: boolean; store?: PatientStore | null };
+  const j = (await r.json()) as {
+    ok?: boolean;
+    store?: PatientStore | null;
+    version?: string | null;
+  };
   if (!j.ok) {
     _isSyncing = false;
     try { window.dispatchEvent(new CustomEvent("mv-store-synced")); } catch {}
     return;
   }
+  remoteStoreVersion = j.version ?? null;
 
   const local = getStore();
   const localHasData =
@@ -184,7 +267,7 @@ export async function syncPatientStoreWithServer(): Promise<void> {
       };
       skipNextRemotePush = true;
       try {
-        localStorage.setItem(KEY, JSON.stringify(merged));
+        localStorage.setItem(patientStoreKey(), JSON.stringify(merged));
         applyEffectiveThemeToDocument(resolveThemePreference(merged.preferences.theme));
         window.dispatchEvent(new CustomEvent("mv-store-update", { detail: merged }));
       } finally {
@@ -256,16 +339,23 @@ export function createBlankPatientStore(
   };
 }
 
-/** After OTP verification: seed a blank local record for brand-new devices, or merge session into an existing store. */
-export function afterOtpSignIn(session: { email?: string | null; phoneE164?: string | null }) {
+/** After OTP verification: activate the account namespace and seed a blank local record if needed. */
+export function afterOtpSignIn(session: {
+  userId: string;
+  email?: string | null;
+  phoneE164?: string | null;
+}) {
   if (typeof window === "undefined") return;
-  const hasStore = localStorage.getItem(KEY) !== null;
-  const inited = localStorage.getItem(ACCOUNT_INIT);
+  activatePatientStoreOwner(session.userId);
+  const key = patientStoreKey();
+  const initKey = accountInitKey();
+  const hasStore = localStorage.getItem(key) !== null;
+  const inited = localStorage.getItem(initKey);
   const sessionPatch = profilePatchFromSession(session);
 
   if (!inited) {
     if (hasStore) {
-      localStorage.setItem(ACCOUNT_INIT, "1");
+      localStorage.setItem(initKey, "1");
       const s = getStore();
       const merged = { ...s, profile: { ...s.profile, ...sessionPatch } };
       if ((merged.docs?.length ?? 0) > 0 && !merged.preferences.onboarding?.completedAtISO) {
@@ -284,7 +374,7 @@ export function afterOtpSignIn(session: { email?: string | null; phoneE164?: str
     } else {
       const blank = createBlankPatientStore(sessionPatch);
       saveStore(blank);
-      localStorage.setItem(ACCOUNT_INIT, "1");
+      localStorage.setItem(initKey, "1");
       if (blank.profile.internalId && blank.profile.email) {
         registerPrimaryAccount(blank.profile.internalId, blank.profile.email, blank.profile.name || "");
       }
@@ -544,14 +634,15 @@ export function getStore(): PatientStore {
   if (typeof window === "undefined") {
     return createBlankPatientStore();
   }
-  const raw = localStorage.getItem(KEY);
+  const key = patientStoreKey();
+  const raw = localStorage.getItem(key);
   if (!raw) return createBlankPatientStore();
   try {
     const parsed = parseStoredPatientStore(JSON.parse(raw));
     if (!parsed.profile.internalId) {
       parsed.profile.internalId = generateInternalId();
       try {
-        localStorage.setItem(KEY, JSON.stringify(parsed));
+        localStorage.setItem(key, JSON.stringify(parsed));
       } catch {
         // ignore storage errors
       }
@@ -582,7 +673,7 @@ export function saveStore(store: PatientStore, opts: { silent?: boolean } = {}) 
   // what's already in localStorage (modulo updatedAtISO, which always changes).
   // This is a cheap-but-effective short-circuit for the rebuild loop.
   try {
-    const existing = localStorage.getItem(KEY);
+    const existing = localStorage.getItem(patientStoreKey());
     if (existing && stripUpdatedAt(existing) === stripUpdatedAt(serialized)) {
       // No effective change — don't dispatch, don't push.
       return;
@@ -590,7 +681,7 @@ export function saveStore(store: PatientStore, opts: { silent?: boolean } = {}) 
   } catch {
     // fall through to write
   }
-  localStorage.setItem(KEY, serialized);
+  localStorage.setItem(patientStoreKey(), serialized);
   if (!opts.silent) {
     try {
       window.dispatchEvent(new CustomEvent("mv-store-update", { detail: store }));
@@ -1261,51 +1352,6 @@ export function markNotificationsUnread(ids: Set<string>): void {
     ids.has(n.id) ? { ...n, readAtISO: undefined } : n
   );
   saveStore({ ...store, notifications });
-}
-
-/* ─── Auto-mode adherence helper ─────────────────────────── */
-
-/**
- * For each medication in `auto` tracking mode, auto-log a "taken" entry for today
- * if no log entry (taken/missed/skipped/extra) has been recorded for that med today.
- * Should be called once per day (on app open; the runner deduplicates via date).
- */
-export function autoLogTodayDoses(): void {
-  if (typeof window === "undefined") return;
-  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-  const store = getStore();
-  const hl = normalizeHealthLogs(store.healthLogs);
-
-  const autoMeds = (store.meds ?? []).filter((m) => m.trackingMode === "auto");
-  if (!autoMeds.length) return;
-
-  const existingTodayNames = new Set(
-    hl.medicationIntake
-      .filter((e) => e.loggedAtISO.startsWith(today))
-      .map((e) => e.medicationName.trim().toLowerCase())
-  );
-
-  const newEntries: import("@/lib/types").MedicationIntakeLogEntry[] = [];
-  for (const med of autoMeds) {
-    const key = med.name.trim().toLowerCase();
-    if (existingTodayNames.has(key)) continue; // already logged today
-    newEntries.push({
-      id: `auto_${today}_${key.replace(/\s+/g, "_").slice(0, 30)}_${Math.random().toString(36).slice(2, 6)}`,
-      loggedAtISO: `${today}T08:00:00.000Z`,
-      medicationName: med.name.trim(),
-      action: "taken",
-      notes: "Auto-logged (auto tracking mode)",
-    });
-  }
-
-  if (!newEntries.length) return;
-  saveStore({
-    ...store,
-    healthLogs: {
-      ...hl,
-      medicationIntake: [...newEntries, ...hl.medicationIntake],
-    },
-  });
 }
 
 // ─── Live store hook ──────────────────────────────────────────────────────────

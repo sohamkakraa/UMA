@@ -378,7 +378,7 @@ export default function WearablesScreen() {
         <View style={styles.trendHeader}>
           <TrendingUp size={20} color={theme.accent} />
           <Text style={[styles.trendTitle, { color: theme.fg, marginLeft: spacing.md }]}>
-            This Week's Trends
+            This Week’s Trends
           </Text>
         </View>
         <View style={[styles.trendContent, { marginTop: spacing.lg }]}>

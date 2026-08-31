@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/soham.kakra/.prism/hooks/capture.sh pre"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/soham.kakra/.prism/prism maintain --quiet"
+          }
+        ]
+      }
+    ]
+  }
+}

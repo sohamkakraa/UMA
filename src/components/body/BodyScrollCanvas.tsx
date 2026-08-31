@@ -93,6 +93,7 @@ export function BodyScrollCanvas({
           }}
         >
           <AnatomyImageWithMagnifier
+            key={mainSrc}
             mainSrc={mainSrc}
             underlaySrc={showSilhouetteUnderlay ? underlaySrc : null}
             themeAttr={themeAttr}

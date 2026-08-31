@@ -38,19 +38,27 @@ const securityHeaders: { key: string; value: string }[] = [
         {
           key: "Content-Security-Policy",
           value: [
-            "default-src ‘self’",
-            "script-src ‘self’ ‘unsafe-inline’",
-            "style-src ‘self’ ‘unsafe-inline’ https://fonts.googleapis.com",
-            "img-src ‘self’ data: blob:",
-            "font-src ‘self’ https://fonts.gstatic.com",
-            "connect-src ‘self’ https://api.anthropic.com https://api.cloud.llamaindex.ai https://api.resend.com",
-            "frame-ancestors ‘none’",
-            "base-uri ‘self’",
-            "form-action ‘self’",
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob:",
+            "font-src 'self'",
+            "connect-src 'self'",
+            "object-src 'none'",
+            "worker-src 'self' blob:",
+            "frame-ancestors 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "upgrade-insecure-requests",
           ].join("; "),
         },
       ]
     : []),
+];
+const sensitiveCacheHeaders = [
+  { key: "Cache-Control", value: "private, no-store, max-age=0" },
+  { key: "Pragma", value: "no-cache" },
+  { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
 ];
 
 const nextConfig: NextConfig = {
@@ -68,6 +76,12 @@ const nextConfig: NextConfig = {
         source: "/(.*)",
         headers: securityHeaders,
       },
+      ...["api", "dashboard", "chat", "docs", "profile", "onboarding", "upload", "health-log"].map(
+        (segment) => ({
+          source: `/${segment}/:path*`,
+          headers: sensitiveCacheHeaders,
+        }),
+      ),
     ];
   },
   async redirects() {

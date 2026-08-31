@@ -13,7 +13,7 @@ import {
   OnDeviceInference,
   InferenceOptions,
   InferenceResult,
-} from "../agents/routine-analyzer/inference";
+} from "../../agents/routine-analyzer/inference";
 
 /**
  * On-device AI configuration
@@ -47,9 +47,9 @@ let initError: Error | null = null;
 export async function initializeOnDeviceAI(
   nativeModule?: any,
   onProgress?: (progress: any) => void
-): Promise<void> {
+): Promise<OnDeviceInference> {
   if (globalInference) {
-    return; // Already initialized
+    return globalInference;
   }
 
   if (isInitializing) {
@@ -62,7 +62,8 @@ export async function initializeOnDeviceAI(
     if (initError) {
       throw initError;
     }
-    return;
+    if (!globalInference) throw new Error("On-device AI initialization did not complete.");
+    return globalInference;
   }
 
   isInitializing = true;
@@ -89,6 +90,8 @@ export async function initializeOnDeviceAI(
   }
 
   isInitializing = false;
+  if (!globalInference) throw new Error("On-device AI initialization did not complete.");
+  return globalInference;
 }
 
 /**
@@ -220,8 +223,8 @@ export async function getInferenceProvider(): Promise<"on-device" | "cloud"> {
   const canRunOnDevice = await (async () => {
     if (!globalInference) {
       try {
-        await initializeOnDeviceAI();
-        return globalInference?.isLoaded() ?? false;
+        const inference = await initializeOnDeviceAI();
+        return inference.isLoaded();
       } catch {
         return false;
       }

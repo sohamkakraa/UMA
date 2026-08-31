@@ -44,11 +44,6 @@ export function AnatomyImageWithMagnifier({
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  useEffect(() => {
-    setShowLens(false);
-    setLensGeom(null);
-  }, [mainSrc]);
-
   const onMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       if (reduceMotion) return;

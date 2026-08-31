@@ -96,8 +96,9 @@ export async function getLlmClient(
 /**
  * Convenience: returns an Anthropic SDK instance or null. Used by call sites
  * whose feature surface is Anthropic-only (PDF document blocks, citations,
- * tool use w/ caching). Honors BYOK when the user picked Anthropic, else
- * falls back to env's Anthropic key.
+ * tool use w/ caching). Honors the user's provider choice and never silently
+ * sends their data through the server Anthropic key after they selected
+ * another provider.
  */
 export async function getAnthropicForUser(
   userId: string | null,
@@ -106,11 +107,6 @@ export async function getAnthropicForUser(
   const c = await getLlmClient(userId, role);
   if (c.provider === "anthropic") {
     return { client: c.anthropic, modelId: c.modelId, source: c.source };
-  }
-  // BYOK user picked a non-Anthropic provider — fall back to env Anthropic
-  const envKey = getAnthropicEnvKey();
-  if (envKey) {
-    return { client: createAnthropicClient(envKey), modelId: null, source: "env" };
   }
   return null;
 }

@@ -26,5 +26,8 @@ export function isBetaDemoIdentifier(norm: NormalizedIdentifier): boolean {
 }
 
 export function shouldExposeBetaDemoOtp(): boolean {
-  return process.env.AUTH_BETA_EXPOSE_DEMO_OTP === "1";
+  return (
+    process.env.NODE_ENV !== "production" &&
+    process.env.AUTH_BETA_EXPOSE_DEMO_OTP === "1"
+  );
 }

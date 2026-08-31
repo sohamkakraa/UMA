@@ -2,7 +2,7 @@
  * UMA Mobile — Supabase Client
  *
  * Initialises the Supabase client with:
- *  - MMKV-backed async storage (encrypted, fast)
+ *  - OS keychain/keystore-backed async storage
  *  - Auto-refresh auth tokens
  *  - Typed database client
  *
@@ -12,7 +12,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { MMKV } from "react-native-mmkv";
+import * as SecureStore from "expo-secure-store";
 
 /* ─── Configuration ──────────────────────────────────────────── */
 
@@ -25,27 +25,19 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   );
 }
 
-/* ─── Encrypted MMKV storage adapter for Supabase Auth ───────── */
+/* ─── OS-backed secure auth storage ───────────────────────────── */
 
-const authStorage = new MMKV({ id: "uma-auth-storage", encryptionKey: "uma-auth-v1" });
-
-const mmkvStorageAdapter = {
-  getItem: (key: string): string | null => {
-    return authStorage.getString(key) ?? null;
-  },
-  setItem: (key: string, value: string): void => {
-    authStorage.set(key, value);
-  },
-  removeItem: (key: string): void => {
-    authStorage.delete(key);
-  },
+const secureStorageAdapter = {
+  getItem: (key: string): Promise<string | null> => SecureStore.getItemAsync(key),
+  setItem: (key: string, value: string): Promise<void> => SecureStore.setItemAsync(key, value),
+  removeItem: (key: string): Promise<void> => SecureStore.deleteItemAsync(key),
 };
 
 /* ─── Supabase Client ────────────────────────────────────────── */
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    storage: mmkvStorageAdapter,
+    storage: secureStorageAdapter,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false, // Not needed in React Native
@@ -85,7 +77,6 @@ export async function verifyOtp(email: string, token: string) {
 export async function signOut() {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
-  authStorage.clearAll();
 }
 
 /**

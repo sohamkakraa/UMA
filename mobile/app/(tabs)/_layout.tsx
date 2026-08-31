@@ -1,5 +1,4 @@
 import React from 'react';
-import { BottomTabNavigationOptions } from '@react-navigation/bottom-tabs';
 import { Tabs } from 'expo-router';
 import { useTheme } from '@/lib/theme';
 import {
@@ -16,7 +15,7 @@ export default function TabsLayout() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
 
-  const screenOptions: BottomTabNavigationOptions = {
+  const screenOptions = {
     headerShown: false,
     tabBarActiveTintColor: theme.accent,
     tabBarInactiveTintColor: theme.muted,
@@ -35,10 +34,7 @@ export default function TabsLayout() {
   };
 
   return (
-    <Tabs
-      screenOptions={screenOptions}
-      sceneContainerStyle={{ backgroundColor: theme.bg }}
-    >
+    <Tabs screenOptions={screenOptions}>
       <Tabs.Screen
         name="index"
         options={{

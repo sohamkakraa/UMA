@@ -49,14 +49,20 @@ public actor UMAClient {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
 
         encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
+        // Next.js route schemas use camelCase. Keep wire keys identical to the
+        // shared API contract instead of silently converting HealthKit fields.
+        encoder.keyEncodingStrategy = .useDefaultKeys
     }
 
     // MARK: - Patient Store
 
     public func fetchStore() async throws -> PatientStore {
         let request = try await authenticatedRequest(for: .patientStore)
-        return try await performRequest(request, decoding: PatientStore.self)
+        let response = try await performRequest(request, decoding: PatientStoreResponse.self)
+        guard response.ok, let store = response.store else {
+            throw UMAClientError.serverError(404, "No patient store is available yet.")
+        }
+        return store
     }
 
     public func streamStore() -> AsyncThrowingStream<PatientStore, Error> {
@@ -71,11 +77,9 @@ public actor UMAClient {
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     let eventStream = await self.sseParser.stream(request: request)
                     for try await event in eventStream {
-                        if let token = event.token,
-                           let data = token.data(using: .utf8),
-                           let store = try? self.decoder.decode(PatientStore.self, from: data) {
-                            continuation.yield(store)
-                        }
+                        guard let token = event.token, token != "connected" else { continue }
+                        let store = try await self.fetchStore()
+                        continuation.yield(store)
                     }
                     continuation.finish()
                 } catch {

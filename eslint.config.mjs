@@ -12,6 +12,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    ".agents/**",
+    ".codex/**",
+    ".claude/**",
+    "_tmp-testing-agent/**",
+    "eval-runs/**",
+    "ios-app/**",
+    "mobile/**",
+    "murphy/**",
   ]),
 ]);
 

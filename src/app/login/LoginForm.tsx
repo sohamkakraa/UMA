@@ -15,6 +15,7 @@ import {
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { UmaLogo } from "@/components/branding/UmaLogo";
 import { COUNTRY_CODES, findCountryByDial } from "@/lib/countryCodes";
+import { BETA_TERMS_VERSION } from "@/lib/legal";
 
 /** Local assets (Unsplash originals: wellness stretch, forest path). */
 const LOGIN_HERO = "/images/login/hero-wellness.jpg";
@@ -62,6 +63,8 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
   const sp = useSearchParams();
   const next = sanitizeNextUrl(sp.get("next"));
   const oauthError = sp.get("error");
+  const rawWaToken = sp.get("wa");
+  const waToken = rawWaToken && /^[A-Za-z0-9_-]{1,64}$/.test(rawWaToken) ? rawWaToken : undefined;
   const router = useRouter();
 
   const [mode, setMode] = useState<"email" | "phone">("email");
@@ -81,15 +84,17 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
   const [betaOtpHint, setBetaOtpHint] = useState<string | null>(null);
   const [otpAnimating, setOtpAnimating] = useState(false);
   const [postAuthTarget, setPostAuthTarget] = useState<string | null>(null);
+  const [acceptedBetaTerms, setAcceptedBetaTerms] = useState(false);
 
   const verifyLock = useRef(false);
 
   const identifier =
     mode === "email" ? email.trim() : phoneNumber.replace(/\D/g, "");
-  const canSubmit =
+  const canSubmit = acceptedBetaTerms && (
     mode === "email"
       ? identifier.length > 0
-      : identifier.length >= 6 && identifier.length <= 14;
+      : identifier.length >= 6 && identifier.length <= 14
+  );
   const displayIdentifier =
     mode === "phone" ? `${phoneCountryCode} ${identifier}` : email.trim();
 
@@ -121,6 +126,8 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
             identifier,
             code: normalized,
             ...(mode === "phone" ? { phoneCountryCode } : {}),
+            ...(waToken ? { waToken } : {}),
+            acceptedTermsVersion: BETA_TERMS_VERSION,
           }),
         });
         const j = (await r.json()) as { ok?: boolean; error?: string };
@@ -129,13 +136,14 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
         const s = await fetch("/api/auth/session");
         const sj = (await s.json()) as {
           ok?: boolean;
+          userId?: string;
           email?: string | null;
           phoneE164?: string | null;
         };
-        if (!sj.ok)
+        if (!sj.ok || !sj.userId)
           throw new Error("Signed in but session could not be loaded.");
 
-        afterOtpSignIn({ email: sj.email, phoneE164: sj.phoneE164 });
+        afterOtpSignIn({ userId: sj.userId, email: sj.email, phoneE164: sj.phoneE164 });
         await syncPatientStoreWithServer();
 
         const store = getStore();
@@ -148,7 +156,7 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
         verifyLock.current = false;
       }
     },
-    [identifier, mode, phoneCountryCode, next],
+    [identifier, mode, phoneCountryCode, next, waToken],
   );
 
   useEffect(() => {
@@ -344,17 +352,16 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
               </CardHeader>
               <CardContent>
                 {showBetaDemoGuidance && (
-                  <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-xs leading-relaxed text-[var(--fg)]">
+                  <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-sm leading-relaxed text-[var(--fg)]">
                     <p className="font-medium text-[var(--fg)]">Beta testers</p>
                     <p className="mt-1 mv-muted">
                       Use the <span className="text-[var(--fg)]">demo email</span> you were given, then tap Send code.
-                      Check your inbox for the 6-digit code. If your host shows a hint on screen in preview mode, you can
-                      use that too.
+                      This closed beta accepts supplied synthetic records only. Check your inbox for the 6-digit code.
                     </p>
                   </div>
                 )}
                 {oauthError && (
-                  <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
+                  <div role="alert" className="mb-4 rounded-xl border border-[var(--accent-2)]/40 bg-[var(--accent-2)]/10 p-3 text-sm text-[var(--fg)]">
                     {oauthError}
                   </div>
                 )}
@@ -511,10 +518,25 @@ export default function LoginForm({ showBetaDemoGuidance }: LoginFormProps) {
                       )}
 
                       {err && (
-                        <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
+                        <div role="alert" className="rounded-xl border border-[var(--accent-2)]/40 bg-[var(--accent-2)]/10 p-3 text-sm text-[var(--fg)]">
                           {err}
                         </div>
                       )}
+
+                      <label className="flex min-h-11 items-start gap-3 text-sm leading-relaxed text-[var(--muted)]">
+                        <input
+                          type="checkbox"
+                          checked={acceptedBetaTerms}
+                          onChange={(event) => setAcceptedBetaTerms(event.target.checked)}
+                          className="mt-1 h-5 w-5 shrink-0 accent-[var(--accent)]"
+                        />
+                        <span>
+                          I am 18 or older, will use synthetic records only, and accept the{" "}
+                          <Link href="/terms" className="text-[var(--accent)] underline">beta terms</Link>
+                          {" "}and{" "}
+                          <Link href="/privacy" className="text-[var(--accent)] underline">privacy policy</Link>.
+                        </span>
+                      </label>
 
                       <Button disabled={loading || !canSubmit} className="w-full">
                         {loading ? "Sending…" : "Send code"}

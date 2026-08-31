@@ -11,7 +11,7 @@ import { AppSideNav } from "@/components/nav/AppSideNav";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   /** Marketing home and auth stay full-width without the app rail. */
-  if (pathname === "/" || pathname === "/login") return <>{children}</>;
+  if (["/", "/login", "/privacy", "/terms"].includes(pathname)) return <>{children}</>;
 
   return (
     <div className="flex w-full min-w-0 min-h-dvh">

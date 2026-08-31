@@ -57,7 +57,9 @@ import {
 import { AppTopNav } from "@/components/nav/AppTopNav";
 import { Footer } from "@/components/ui/Footer";
 import { InsuranceSection } from "@/components/insurance/InsuranceSection";
+import { AccountDataControls } from "@/components/profile/AccountDataControls";
 import { RecordNoticeToast } from "@/components/ui/RecordNoticeToast";
+import { BETA_FEATURES } from "@/lib/features";
 import { PROVIDERS } from "@/lib/providers/registry";
 import type { ProviderId } from "@/lib/providers/registry";
 import { Droplets, Plus, LogOut, Ruler, Users, Trash2, Link2, UserCheck, UserX, Send, Mail, Check, X, Pencil, Eye, EyeOff, ChevronsUpDown } from "lucide-react";
@@ -1062,6 +1064,7 @@ export default function ProfilePage() {
       />
 
       <main className="mx-auto w-full max-w-5xl flex-1 space-y-6 px-4 py-8 pb-12">
+        <h1 className="sr-only">Your profile and settings</h1>
         <div className="grid gap-4">
           <Card id="profile-patient-details" className="scroll-mt-24">
             <CardHeader>
@@ -1101,6 +1104,7 @@ export default function ProfilePage() {
                 <div className="flex min-w-0 flex-col gap-1.5 text-xs mv-muted">
                   <span className="leading-tight">Sex</span>
                   <NativeSelect
+                    aria-label="Sex"
                     value={store.profile.sex ?? ""}
                     onChange={(e) => updateProfile({ sex: e.target.value || undefined })}
                   >
@@ -1183,7 +1187,7 @@ export default function ProfilePage() {
                       className="flex-1"
                     />
                     {/* Verify button — only shown when there's a number and it's not already verified */}
-                    {hydrated && phoneInput.trim() && !store.profile.whatsappVerified && (
+                    {BETA_FEATURES.whatsapp && hydrated && phoneInput.trim() && !store.profile.whatsappVerified && (
                       <button
                         type="button"
                         onClick={() => setShowOtpModal(true)}
@@ -1192,7 +1196,7 @@ export default function ProfilePage() {
                         Verify
                       </button>
                     )}
-                    {hydrated && store.profile.whatsappVerified && (
+                    {BETA_FEATURES.whatsapp && hydrated && store.profile.whatsappVerified && (
                       <div className="shrink-0 flex items-center gap-2">
                         <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
                           <Check className="h-3.5 w-3.5" /> Verified
@@ -1259,6 +1263,7 @@ export default function ProfilePage() {
                     <>
                       <div className="flex gap-2">
                         <NativeSelect
+                          aria-label="Regular doctor"
                           value={store.profile.primaryCareProvider ?? ""}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -1339,6 +1344,7 @@ export default function ProfilePage() {
                     <>
                       <div className="flex gap-2">
                         <NativeSelect
+                          aria-label="Hospital or clinic"
                           value={store.profile.nextVisitHospital ?? ""}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -1404,8 +1410,9 @@ export default function ProfilePage() {
               <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-3">
                 <div className="flex min-w-0 flex-col gap-1.5 text-xs mv-muted">
                   <span>Height</span>
-                  <div className="flex h-10 w-full items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
+                  <div className="flex h-11 w-full items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
                     <input
+                      aria-label="Height"
                       className="h-full min-w-0 flex-1 rounded-l-2xl bg-transparent px-3 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] outline-none"
                       inputMode="decimal"
                       placeholder={store.profile.bodyMetrics?.heightUnit === "in" ? "e.g. 65" : "e.g. 165"}
@@ -1430,6 +1437,7 @@ export default function ProfilePage() {
                       }
                     >
                       <SelectTrigger
+                        aria-label="Height unit"
                         className="uma-select shrink-0 rounded-none rounded-r-[15px] bg-[var(--panel)] px-2 text-xs text-[var(--muted)]"
                         style={{
                           height: "100%",
@@ -1451,8 +1459,9 @@ export default function ProfilePage() {
                 </div>
                 <div className="flex min-w-0 flex-col gap-1.5 text-xs mv-muted">
                   <span>Weight</span>
-                  <div className="flex h-10 w-full items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
+                  <div className="flex h-11 w-full items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
                     <input
+                      aria-label="Weight"
                       className="h-full min-w-0 flex-1 rounded-l-2xl bg-transparent px-3 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] outline-none"
                       inputMode="decimal"
                       placeholder={store.profile.bodyMetrics?.weightUnit === "lb" ? "e.g. 150" : "e.g. 62"}
@@ -1477,6 +1486,7 @@ export default function ProfilePage() {
                       }
                     >
                       <SelectTrigger
+                        aria-label="Weight unit"
                         className="uma-select shrink-0 rounded-none rounded-r-[15px] bg-[var(--panel)] px-2 text-xs text-[var(--muted)]"
                         style={{
                           height: "100%",
@@ -1498,8 +1508,9 @@ export default function ProfilePage() {
                 </div>
                 <div className="flex min-w-0 flex-col gap-1.5 text-xs mv-muted">
                   <span>Waist</span>
-                  <div className="flex h-10 w-full items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
+                  <div className="flex h-11 w-full items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
                     <input
+                      aria-label="Waist measurement"
                       className="h-full min-w-0 flex-1 rounded-l-2xl bg-transparent px-3 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] outline-none"
                       inputMode="decimal"
                       placeholder="Optional"
@@ -1524,6 +1535,7 @@ export default function ProfilePage() {
                       }
                     >
                       <SelectTrigger
+                        aria-label="Waist unit"
                         className="uma-select shrink-0 rounded-none rounded-r-[15px] bg-[var(--panel)] px-2 text-xs text-[var(--muted)]"
                         style={{
                           height: "100%",
@@ -1722,7 +1734,11 @@ export default function ProfilePage() {
         </div>
 
         {/* ── Insurance — always shown ── */}
-        <InsuranceSection store={store} onStoreChange={() => window.dispatchEvent(new Event("mv-store-update"))} />
+        <InsuranceSection
+          store={store}
+          onStoreChange={() => window.dispatchEvent(new Event("mv-store-update"))}
+          allowEmailSend={BETA_FEATURES.insuranceEmail}
+        />
 
         {/* ── AI provider (BYOK) — always shown ── */}
         <section id="profile-ai-provider" className="mv-card rounded-3xl p-5 sm:p-6 scroll-mt-24">
@@ -1746,6 +1762,7 @@ export default function ProfilePage() {
                   Provider
                 </label>
                 <NativeSelect
+                  aria-label="AI provider"
                   value={byokProvider}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -1768,6 +1785,7 @@ export default function ProfilePage() {
                   Model
                 </label>
                 <NativeSelect
+                  aria-label="AI model"
                   value={byokModel}
                   onChange={(e) => { setByokModel(e.target.value); setByokState("idle"); setByokError(null); }}
                   disabled={byokProvider === "default"}
@@ -1897,7 +1915,7 @@ export default function ProfilePage() {
         </section>
 
         {/* ── Family profiles — only shown for the primary account holder ── */}
-        {!activeMember && (
+        {BETA_FEATURES.familyConnections && !activeMember && (
           <Card id="profile-family" className="scroll-mt-24">
             <CardHeader>
               <div className="flex items-center gap-2">
@@ -2106,7 +2124,7 @@ export default function ProfilePage() {
           </Card>
         )}
 
-        {!activeMember && (
+        {BETA_FEATURES.familyConnections && !activeMember && (
           <Card id="profile-family-connections" className="scroll-mt-24">
             <CardHeader>
               <div className="flex items-center gap-2">
@@ -2362,7 +2380,7 @@ export default function ProfilePage() {
         )}
 
         {/* ── OTP verification modal ── */}
-        {showOtpModal && (
+        {BETA_FEATURES.whatsapp && showOtpModal && (
           <div
             className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50"
             onClick={() => { setShowOtpModal(false); setOtpSent(false); setWaCodeInput(""); setWaCodeError(null); }}
@@ -2529,6 +2547,9 @@ export default function ProfilePage() {
             </div>
           </div>
         )}
+        <div className="mx-auto mt-6 w-full max-w-7xl px-4 pb-8 sm:px-6 lg:px-8">
+          <AccountDataControls />
+        </div>
       </main>
 
       <Footer />

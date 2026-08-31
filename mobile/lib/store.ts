@@ -14,6 +14,8 @@
 
 import { create } from "zustand";
 import { MMKV } from "react-native-mmkv";
+import * as SecureStore from "expo-secure-store";
+import * as Crypto from "expo-crypto";
 import type {
   PatientStore,
   ExtractedDoc,
@@ -25,15 +27,24 @@ import type {
 
 /* ─── Encrypted local persistence ────────────────────────────── */
 
-const storage = new MMKV({
-  id: "uma-patient-store",
-  encryptionKey: "uma-store-v1",
-});
-
 const STORE_KEY = "mv_patient_store_v1";
+const STORAGE_KEY_KEYCHAIN = "uma_patient_store_encryption_key_v1";
+let storage: MMKV | null = null;
 
-function loadPersistedStore(): PatientStore {
-  const raw = storage.getString(STORE_KEY);
+async function encryptedStorage(): Promise<MMKV> {
+  if (storage) return storage;
+  let encryptionKey = await SecureStore.getItemAsync(STORAGE_KEY_KEYCHAIN);
+  if (!encryptionKey) {
+    encryptionKey = `${Crypto.randomUUID()}${Crypto.randomUUID()}`;
+    await SecureStore.setItemAsync(STORAGE_KEY_KEYCHAIN, encryptionKey);
+  }
+  storage = new MMKV({ id: "uma-patient-store", encryptionKey });
+  return storage;
+}
+
+async function loadPersistedStore(): Promise<PatientStore> {
+  const localStorage = await encryptedStorage();
+  const raw = localStorage.getString(STORE_KEY);
   if (raw) {
     try {
       return JSON.parse(raw) as PatientStore;
@@ -107,7 +118,7 @@ interface UmaStore extends PatientStore {
   /* ── Actions ───────────────────────────────────────────── */
 
   /** Hydrate store from encrypted MMKV */
-  hydrate: () => void;
+  hydrate: () => Promise<void>;
 
   /** Merge an extracted document (same logic as web) */
   mergeDoc: (doc: ExtractedDoc) => void;
@@ -145,8 +156,8 @@ export const useStore = create<UmaStore>((set, get) => ({
   hydrated: false,
 
   /* ── Hydrate from disk ─────────────────────────────────── */
-  hydrate: () => {
-    const persisted = loadPersistedStore();
+  hydrate: async () => {
+    const persisted = await loadPersistedStore();
     set({ ...persisted, hydrated: true });
   },
 
@@ -274,5 +285,5 @@ function persist(full: UmaStore, _patch: Partial<PatientStore>) {
     updatedAtISO: full.updatedAtISO,
     ..._patch,
   };
-  storage.set(STORE_KEY, JSON.stringify(snapshot));
+  storage?.set(STORE_KEY, JSON.stringify(snapshot));
 }

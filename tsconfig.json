@@ -31,5 +31,15 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "mobile"]
+  "exclude": [
+    "node_modules",
+    ".agents",
+    ".codex",
+    ".claude",
+    "_tmp-testing-agent",
+    "eval-runs",
+    "ios-app",
+    "mobile",
+    "murphy"
+  ]
 }

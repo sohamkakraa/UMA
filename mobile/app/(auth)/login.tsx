@@ -8,8 +8,11 @@ import {
   Platform,
   ScrollView,
   useWindowDimensions,
+  Switch,
+  Linking,
 } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router';
 import { useTheme } from '@/lib/theme';
 import { spacing, radius, typography, shadows } from '@/lib/theme';
@@ -18,6 +21,9 @@ import Card from '@/components/ui/Card';
 import TextInput from '@/components/ui/TextInput';
 import { useAuthStore } from '@/lib/auth';
 
+const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'https://uma.sohamkakra.com/api').replace(/\/$/, '');
+const BETA_TERMS_VERSION = '2026-07-10';
+
 export default function LoginScreen() {
   const theme = useTheme();
   const [email, setEmail] = useState('');
@@ -25,15 +31,12 @@ export default function LoginScreen() {
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [acceptedBetaTerms, setAcceptedBetaTerms] = useState(false);
   const setAuthenticated = useAuthStore((s) => s.setAuthenticated);
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
 
-  React.useEffect(() => {
-    checkBiometricAvailability();
-  }, []);
-
-  const checkBiometricAvailability = async () => {
+  async function checkBiometricAvailability() {
     try {
       const compatible = await LocalAuthentication.hasHardwareAsync();
       const enrolled = await LocalAuthentication.isEnrolledAsync();
@@ -41,7 +44,14 @@ export default function LoginScreen() {
     } catch (error) {
       console.error('Biometric check failed:', error);
     }
-  };
+  }
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      void checkBiometricAvailability();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleSendOtp = async () => {
     if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
@@ -51,12 +61,18 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      // In a real app, this would call your backend to send OTP
-      // For demo, we'll just proceed to OTP entry
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const response = await fetch(`${API_BASE}/auth/request-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: email.trim().toLowerCase() }),
+      });
+      const result = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error ?? 'Failed to send OTP.');
+      }
       setOtpSent(true);
     } catch (error) {
-      alert('Failed to send OTP. Please try again.');
+      alert(error instanceof Error ? error.message : 'Failed to send OTP. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -70,20 +86,40 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      // In a real app, this would verify the OTP with your backend
-      // For demo, we'll just log in
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      const mockUser = {
-        id: '1',
-        email,
-        name: email.split('@')[0],
+      const verifyResponse = await fetch(`${API_BASE}/auth/verify-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-UMA-Client': 'ios',
+        },
+        body: JSON.stringify({
+          identifier: email.trim().toLowerCase(),
+          code: otp,
+          acceptedTermsVersion: BETA_TERMS_VERSION,
+        }),
+      });
+      const verifyResult = await verifyResponse.json() as { ok?: boolean; token?: string; error?: string };
+      if (!verifyResponse.ok || !verifyResult.ok || !verifyResult.token) {
+        throw new Error(verifyResult.error ?? 'Failed to verify OTP.');
+      }
+      const sessionResponse = await fetch(`${API_BASE}/auth/session`, {
+        headers: { Authorization: `Bearer ${verifyResult.token}` },
+      });
+      const session = await sessionResponse.json() as {
+        ok?: boolean;
+        userId?: string;
+        email?: string | null;
       };
-
-      await setAuthenticated('mock-token', mockUser);
+      if (!sessionResponse.ok || !session.ok || !session.userId) {
+        throw new Error('Signed in, but the account could not be loaded.');
+      }
+      await setAuthenticated(verifyResult.token, {
+        id: session.userId,
+        email: session.email ?? email.trim().toLowerCase(),
+      });
       router.replace('/(tabs)');
     } catch (error) {
-      alert('Failed to verify OTP. Please try again.');
+      alert(error instanceof Error ? error.message : 'Failed to verify OTP. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -93,18 +129,18 @@ export default function LoginScreen() {
     try {
       const result = await LocalAuthentication.authenticateAsync({
         disableDeviceFallback: false,
-        reason: 'Unlock UMA to access your health records',
+        promptMessage: 'Unlock UMA to access your health records',
       });
 
       if (result.success) {
-        // In a real app, get stored user data
-        const mockUser = {
-          id: '1',
-          email: 'user@example.com',
-          name: 'User',
-        };
-        await setAuthenticated('mock-token', mockUser);
-        router.replace('/(tabs)');
+        const token = await SecureStore.getItemAsync('auth_token');
+        const rawUser = await SecureStore.getItemAsync('user_data');
+        if (token && rawUser) {
+          await setAuthenticated(token, JSON.parse(rawUser));
+          router.replace('/(tabs)');
+        } else {
+          alert('Sign in with a one-time code before enabling biometric unlock.');
+        }
       }
     } catch (error) {
       alert('Biometric authentication failed');
@@ -149,10 +185,35 @@ export default function LoginScreen() {
                     />
                   </View>
 
+                  <View style={styles.consentRow}>
+                    <Switch
+                      value={acceptedBetaTerms}
+                      onValueChange={setAcceptedBetaTerms}
+                      accessibilityLabel="Accept closed beta terms"
+                    />
+                    <Text style={[styles.consentText, { color: theme.muted }]}>
+                      I am 18 or older, will use synthetic records only, and accept the{' '}
+                      <Text
+                        style={[styles.consentLink, { color: theme.accent }]}
+                        onPress={() => Linking.openURL('https://uma.sohamkakra.com/terms')}
+                      >
+                        beta terms
+                      </Text>
+                      {' '}and{' '}
+                      <Text
+                        style={[styles.consentLink, { color: theme.accent }]}
+                        onPress={() => Linking.openURL('https://uma.sohamkakra.com/privacy')}
+                      >
+                        privacy policy
+                      </Text>.
+                    </Text>
+                  </View>
+
                   <Button
                     title="Send OTP"
                     onPress={handleSendOtp}
                     loading={loading}
+                    disabled={!acceptedBetaTerms}
                     style={styles.button}
                   />
 
@@ -274,6 +335,22 @@ const styles = StyleSheet.create({
   },
   button: {
     marginBottom: spacing.md,
+  },
+  consentRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  consentText: {
+    flex: 1,
+    fontFamily: 'space-grotesk',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  consentLink: {
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
   divider: {
     flexDirection: 'row',

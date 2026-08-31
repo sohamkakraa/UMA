@@ -9,7 +9,9 @@ const E2E_EMAIL = "e2e-dev@uma.local";
  */
 export async function loginWithDevToken(page: Page): Promise<void> {
   const baseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+  const testSecret = process.env.UMA_TEST_AUTH_SECRET;
   const res = await page.request.post(`${baseUrl}/api/auth/test-session`, {
+    headers: testSecret ? { "x-uma-test-auth": testSecret } : undefined,
     data: { sub: E2E_USER_ID, email: E2E_EMAIL },
   });
   if (!res.ok()) {
@@ -22,8 +24,8 @@ export async function loginWithDevToken(page: Page): Promise<void> {
 export const test = base.extend<{
   authenticatedPage: Page;
 }>({
-  authenticatedPage: async ({ page }, use) => {
+  authenticatedPage: async ({ page }, provide) => {
     await loginWithDevToken(page);
-    await use(page);
+    await provide(page);
   },
 });

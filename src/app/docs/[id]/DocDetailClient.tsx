@@ -14,7 +14,7 @@ import { LabReadingTile } from "@/components/labs/LabReadingTile";
 import { downloadMarkdownFile, downloadPdfFromBase64 } from "@/lib/downloads";
 import { buildSyntheticMarkdownArtifact, parseOverviewSection } from "@/lib/markdownDoc";
 import { enrichDocFromMarkdown } from "@/lib/parseMarkdownArtifact";
-import { getCanonicalRefRange } from "@/lib/labInterpret";
+import { interpretLab } from "@/lib/labInterpret";
 import { getLabMeta } from "@/lib/labMeta";
 import { ArrowLeft, Download } from "lucide-react";
 
@@ -22,35 +22,16 @@ function HealthInsightsCard({ record }: { record: ReturnType<typeof getStore>["d
   if (record.type !== "Lab report") return null;
   if (!record.labs?.length) return null;
 
-  const abnormalLabs = record.labs
-    .map((lab) => {
-      const ref = getCanonicalRefRange(lab.name);
-      if (!ref) return null;
-      const value = parseFloat(String(lab.value).replace(/[^\d.]/g, ""));
-      if (isNaN(value)) return null;
-
-      let severity = "normal";
-      let isOutOfRange = false;
-
-      if (value < ref.low) {
-        isOutOfRange = true;
-        severity = value < ref.low * 0.5 ? "critical" : "low";
-      } else if (value > ref.high) {
-        isOutOfRange = true;
-        severity = value > ref.high * 2 ? "critical" : "high";
-      }
-
-      return { lab, value, ref, isOutOfRange, severity };
-    })
-    .filter((x) => x !== null && x.isOutOfRange) as Array<{
-      lab: typeof record.labs[0];
-      value: number;
-      ref: { low: number; high: number; unit: string };
-      isOutOfRange: boolean;
-      severity: string;
-    }>;
-
-  const inRangeCount = (record.labs?.length ?? 0) - abnormalLabs.length;
+  const evaluatedLabs = record.labs
+    .filter((lab) => Boolean(lab.refRange?.trim()))
+    .map((lab) => ({ lab, interpretation: interpretLab(lab) }))
+    .filter(({ interpretation }) => interpretation.flag !== "unknown");
+  const abnormalLabs = evaluatedLabs.filter(
+    ({ interpretation }) => interpretation.flag === "high" || interpretation.flag === "low",
+  );
+  const inRangeCount = evaluatedLabs.filter(
+    ({ interpretation }) => interpretation.flag === "in_range",
+  ).length;
 
   return (
     <Card>
@@ -58,56 +39,44 @@ function HealthInsightsCard({ record }: { record: ReturnType<typeof getStore>["d
         <h2 className="text-sm font-medium">What this means for you</h2>
       </CardHeader>
       <CardContent className="space-y-4">
-        {abnormalLabs.length === 0 ? (
+        {evaluatedLabs.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">
+            UMA could not read a reference range from this report. Use the original report and ask your care team what the values mean for you.
+          </p>
+        ) : abnormalLabs.length === 0 ? (
           <div>
             <p className="text-sm text-[var(--fg)] mb-2">
-              Most of your results look normal. That's good news.
+              UMA did not flag a value in this summary.
             </p>
-            <p className="text-xs text-[var(--muted)]">
-              {inRangeCount} out of {record.labs?.length ?? 0} test result{inRangeCount === 1 ? " is" : "s are"} in range.
+            <p className="text-sm text-[var(--muted)]">
+              {inRangeCount} result{inRangeCount === 1 ? " is" : "s are"} within the range printed on this report. Check the original report before acting.
             </p>
           </div>
         ) : (
           <div className="space-y-3">
             <p className="text-sm font-semibold text-[var(--fg)]">Concerns</p>
-            {abnormalLabs.map((item, idx) => {
-              const meta = getLabMeta(item.lab.name);
-              const direction = item.severity === "low" || item.value < item.ref.low ? "low" : "high";
-              const colorClass =
-                item.severity === "critical"
-                  ? "text-red-600 bg-red-500/15"
-                  : "text-amber-600 bg-amber-500/15";
-
+            {abnormalLabs.map(({ lab, interpretation }, idx) => {
+              const meta = getLabMeta(lab.name);
               return (
                 <div
                   key={idx}
-                  className={`rounded-lg border border-current/20 p-3 text-sm ${colorClass}`}
+                  className="rounded-lg border border-[var(--accent-2)]/30 bg-[var(--accent-2)]/10 p-3 text-sm text-[var(--fg)]"
                 >
                   <p className="font-semibold mb-1">
-                    {meta?.friendlyName ?? item.lab.name}{" "}
-                    {direction === "low" ? "(low)" : "(high)"}
+                    {meta?.friendlyName ?? lab.name}{" "}
+                    {interpretation.flag === "low" ? "(below report range)" : "(above report range)"}
                   </p>
                   {meta?.whyItMatters && (
-                    <p className="text-xs opacity-90">{meta.whyItMatters}</p>
+                    <p className="text-sm text-[var(--muted)]">{meta.whyItMatters}</p>
                   )}
                 </div>
               );
             })}
           </div>
         )}
-
-        {abnormalLabs.some((x) => x.severity === "critical") && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 font-medium">
-            Some of these values may need attention soon. Talk to your doctor about these results.
-          </div>
-        )}
-
-        {abnormalLabs.length > 0 && abnormalLabs.every((x) => x.severity !== "critical") && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700">
-            Talk to your doctor about these results at your next visit.
-          </div>
-        )}
-
+        <p className="text-sm font-medium text-[var(--muted)]">
+          Not medical advice — report ranges vary by person and laboratory. Ask your care team before acting.
+        </p>
       </CardContent>
     </Card>
   );
@@ -144,10 +113,11 @@ export default function DocDetailClient() {
               <p className="text-sm mv-muted mt-1">
                 We could not find this file in your saved records.
               </p>
-              <Link href="/dashboard" className="inline-block mt-3">
-                <Button variant="ghost" className="gap-2">
-                  <ArrowLeft className="h-4 w-4" /> Back to home
-                </Button>
+              <Link
+                href="/dashboard"
+                className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--fg)] hover:bg-[var(--panel-2)]"
+              >
+                <ArrowLeft className="h-4 w-4" /> Back to home
               </Link>
             </CardContent>
           </Card>
@@ -193,10 +163,11 @@ export default function DocDetailClient() {
 
       <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
         <div className="flex items-center gap-3">
-          <Link href="/dashboard">
-            <Button variant="ghost" className="gap-2">
-              <ArrowLeft className="h-4 w-4" /> Back
-            </Button>
+          <Link
+            href="/dashboard"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--fg)] hover:bg-[var(--panel-2)]"
+          >
+            <ArrowLeft className="h-4 w-4" /> Back
           </Link>
           <div>
             <h1 className="text-lg font-semibold">File details</h1>
@@ -215,6 +186,9 @@ export default function DocDetailClient() {
             <div className="prose-uma text-sm text-[var(--fg)] leading-relaxed">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryLine}</ReactMarkdown>
             </div>
+            <p className="text-sm font-medium text-[var(--muted)]">
+              AI-generated summary. Not medical advice — verify it against the original file.
+            </p>
           </CardContent>
         </Card>
 

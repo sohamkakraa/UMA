@@ -1,17 +1,17 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../fixtures/test";
 import { loginWithDevToken } from "../fixtures/auth";
 import { seedPatientStore } from "../fixtures/seed-store";
 
-test.describe("Dashboard — Concerning items section", () => {
+test.describe("Dashboard — Items to review section", () => {
   test.beforeEach(async ({ page }) => {
     await loginWithDevToken(page);
     await page.goto("/dashboard");
     await seedPatientStore(page);
   });
 
-  test("shows 'Concerning items' heading", async ({ page }) => {
+  test("shows 'Items to review' heading", async ({ page }) => {
     await expect(
-      page.getByRole("heading", { name: "Concerning items" }),
+      page.getByRole("heading", { name: "Items to review" }),
     ).toBeVisible();
   });
 

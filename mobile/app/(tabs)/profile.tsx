@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -35,21 +35,12 @@ export default function ProfileScreen() {
   const setTheme = useThemeStore((s) => s.setMode);
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<ProfileFormData>({
-    name: '',
-    email: '',
+    name: user?.name?.trim() ?? '',
+    email: user?.email ?? '',
     dob: '',
     phone: '',
     primaryCareProvider: '',
   });
-
-  useEffect(() => {
-    if (!user) return;
-    setFormData((prev) => ({
-      ...prev,
-      name: user.name?.trim() ?? prev.name,
-      email: user.email ?? prev.email,
-    }));
-  }, [user]);
 
   const isTablet = width >= 768;
 

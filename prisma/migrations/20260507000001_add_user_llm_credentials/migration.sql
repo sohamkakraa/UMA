@@ -10,5 +10,5 @@ CREATE TABLE IF NOT EXISTS "user_llm_credentials" (
   "verified_at" TIMESTAMP(3),
   "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "user_llm_credentials_pkey" PRIMARY KEY ("user_id"),
-  CONSTRAINT "user_llm_credentials_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT "user_llm_credentials_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );

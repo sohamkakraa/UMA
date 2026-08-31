@@ -15,7 +15,6 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useState,
@@ -373,9 +372,6 @@ export function GlobalUploadProvider({ children }: { children: ReactNode }) {
   const [state, setStateLocal] = useState<GlobalUploadState>(() => ({ ..._state }));
 
   useEffect(() => {
-    // Sync immediately in case the singleton changed while we were unmounted.
-    setStateLocal({ ..._state });
-
     const listener: Listener = (snap) => setStateLocal(snap);
     _listeners.add(listener);
     return () => {
@@ -383,12 +379,12 @@ export function GlobalUploadProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const startExtract = useCallback(singletonStartExtract, []);
-  const cancelExtract = useCallback(singletonCancelExtract, []);
-  const clear = useCallback(singletonClear, []);
-  const dismissBadge = useCallback(singletonDismissBadge, []);
-  const openUploadSheet = useCallback(singletonOpenUploadSheet, []);
-  const closeUploadSheet = useCallback(singletonCloseUploadSheet, []);
+  const startExtract = singletonStartExtract;
+  const cancelExtract = singletonCancelExtract;
+  const clear = singletonClear;
+  const dismissBadge = singletonDismissBadge;
+  const openUploadSheet = singletonOpenUploadSheet;
+  const closeUploadSheet = singletonCloseUploadSheet;
 
   return (
     <GlobalUploadContext.Provider value={{ ...state, startExtract, cancelExtract, clear, dismissBadge, openUploadSheet, closeUploadSheet }}>

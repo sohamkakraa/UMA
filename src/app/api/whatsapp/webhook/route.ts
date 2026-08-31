@@ -40,11 +40,9 @@ export const maxDuration = 30; // Allow up to 30s for LLM processing
  */
 function verifyMetaSignature(rawBody: string, signatureHeader: string | null): boolean {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
-  // If no app secret configured, log a warning but allow (so webhook works during initial setup).
-  // Set WHATSAPP_APP_SECRET in production to enable signature verification. — VULN-001
   if (!appSecret) {
-    console.warn("[WhatsApp] WHATSAPP_APP_SECRET not set — skipping signature verification. Set it in production.");
-    return true;
+    console.error("[WhatsApp] Webhook rejected because signature verification is not configured.");
+    return false;
   }
   if (!signatureHeader) return false;
 

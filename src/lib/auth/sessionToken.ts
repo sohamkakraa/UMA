@@ -1,4 +1,5 @@
-const MAX_AGE_SEC = 60 * 60 * 24 * 14;
+/** Closed-beta sessions expire after 24 hours to limit exposure of stolen tokens. */
+const MAX_AGE_SEC = 60 * 60 * 24;
 
 export type SessionClaims = {
   v: 2;

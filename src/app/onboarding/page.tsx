@@ -47,7 +47,7 @@ export default function OnboardingPage() {
     saveStore(next);
   }
 
-  async function completePhase1(e: React.FormEvent) {
+  function completePhase1(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     const fn = firstName.trim();
@@ -70,18 +70,6 @@ export default function OnboardingPage() {
 
     setSaving(true);
     try {
-      const r = await fetch("/api/auth/refresh-session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email: em,
-          ...(countryCode.trim() ? { phoneCountryCode: countryCode.trim() } : {}),
-          ...(digits ? { phoneNational: digits } : {}),
-        }),
-      });
-      const j = (await r.json()) as { ok?: boolean; error?: string };
-      if (!r.ok || !j.ok) throw new Error(j.error ?? "Could not link email and phone");
-
       const full = [fn, ln].join(" ").trim();
       const cur = getStore();
       const next = {
@@ -108,7 +96,7 @@ export default function OnboardingPage() {
       persist(next);
       setPhase(2);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Something went wrong");
+      setErr(e instanceof Error ? e.message : "Could not save your details.");
     } finally {
       setSaving(false);
     }

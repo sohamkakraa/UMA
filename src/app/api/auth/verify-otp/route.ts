@@ -11,6 +11,11 @@ import {
 } from "@/lib/auth/sessionToken";
 import { checkRateLimitDb } from "@/lib/auth/otpRateLimitDb";
 import { prisma } from "@/lib/prisma";
+import {
+  hasTrustedMutationOrigin,
+  requestClientIp,
+} from "@/lib/server/requestSecurity";
+import { BETA_TERMS_VERSION } from "@/lib/legal";
 
 export const runtime = "nodejs";
 
@@ -19,23 +24,21 @@ export const runtime = "nodejs";
 // within the 10-minute TTL window at modest request rates.
 const VERIFY_RATE_KEY_PREFIX = "otp-verify:";
 
-function clientIp(req: Request): string {
-  const xf = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for");
-  if (xf) return xf.split(",")[0]!.trim() || "unknown";
-  return "unknown";
-}
-
 const bodySchema = z.object({
   identifier: z.string().min(3).max(320),
   code: z.string().regex(/^\d{6}$/),
   phoneCountryCode: z.string().max(8).optional(),
   /** One-time token from `?wa=<token>` — binds the verified phone to a PendingLink. */
   waToken: z.string().max(64).optional(),
+  acceptedTermsVersion: z.literal(BETA_TERMS_VERSION),
 });
 
 export async function POST(req: Request) {
+  if (!hasTrustedMutationOrigin(req)) {
+    return NextResponse.json({ ok: false, error: "Cross-site request blocked." }, { status: 403 });
+  }
   // Fixed VULN-005 + VULN-007: DB-backed rate limit on verify (10 per 15 min per IP)
-  const ip = clientIp(req);
+  const ip = requestClientIp(req);
   if (!(await checkRateLimitDb(`${VERIFY_RATE_KEY_PREFIX}${ip}`, 10, 15 * 60 * 1000))) {
     return NextResponse.json(
       { ok: false, error: "Too many verification attempts. Please wait a few minutes and try again." },
@@ -115,6 +118,21 @@ export async function POST(req: Request) {
       );
     }
     return NextResponse.json({ ok: false, error: "Could not create account." }, { status: 503 });
+  }
+
+  try {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        termsAcceptedAt: new Date(),
+        termsVersion: BETA_TERMS_VERSION,
+      },
+    });
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: "Could not record beta consent." },
+      { status: 503 },
+    );
   }
 
   // Consume a PendingLink token if provided (from ?wa= in the login URL).

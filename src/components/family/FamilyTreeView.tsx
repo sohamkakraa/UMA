@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { X, Pencil, Check, User, Users, Heart, Baby, UserCircle, Link2 } from "lucide-react";
 import { cn } from "@/components/ui/cn";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/Select";
-import { getHydrationSafeStore, getStore, setActiveFamilyMember, saveStore, updateFamilyMemberMeta } from "@/lib/store";
+import { getHydrationSafeStore, getStore, setActiveFamilyMember, updateFamilyMemberMeta } from "@/lib/store";
 import type { FamilyMemberMeta, FamilyRelation } from "@/lib/types";
 import { FAMILY_RELATION_LABELS } from "@/lib/types";
 
@@ -248,20 +248,30 @@ function NodeCard({ member, isSelf = false, onEditSave, onNavigate }: NodeCardPr
 /* ─── connector lines via SVG overlay ────────────────────── */
 
 interface ConnectorProps {
-  fromRef: React.RefObject<HTMLDivElement | null>;
-  toRef: React.RefObject<HTMLDivElement | null>;
+  fromId: string;
+  toId: string;
+  nodeRefs: React.RefObject<Record<string, HTMLDivElement | null>>;
+  selfRef: React.RefObject<HTMLDivElement | null>;
   containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-function Connector({ fromRef, toRef, containerRef }: ConnectorProps) {
+function Connector({
+  fromId,
+  toId,
+  nodeRefs,
+  selfRef,
+  containerRef,
+}: ConnectorProps) {
   const [path, setPath] = useState<string | null>(null);
 
   useEffect(() => {
     function compute() {
-      if (!fromRef.current || !toRef.current || !containerRef.current) return;
+      const fromNode = fromId === "self" ? selfRef.current : nodeRefs.current[fromId];
+      const toNode = toId === "self" ? selfRef.current : nodeRefs.current[toId];
+      if (!fromNode || !toNode || !containerRef.current) return;
       const box = containerRef.current.getBoundingClientRect();
-      const a = fromRef.current.getBoundingClientRect();
-      const b = toRef.current.getBoundingClientRect();
+      const a = fromNode.getBoundingClientRect();
+      const b = toNode.getBoundingClientRect();
 
       const x1 = a.left + a.width / 2 - box.left;
       const y1 = a.bottom - box.top;
@@ -278,7 +288,7 @@ function Connector({ fromRef, toRef, containerRef }: ConnectorProps) {
       clearTimeout(timer);
       window.removeEventListener("resize", compute);
     };
-  }, [fromRef, toRef, containerRef]);
+  }, [fromId, toId, nodeRefs, selfRef, containerRef]);
 
   if (!path) return null;
   return (
@@ -297,22 +307,21 @@ function Connector({ fromRef, toRef, containerRef }: ConnectorProps) {
 
 export function FamilyTreeView({ onClose }: { onClose: () => void }) {
   const [store, setStoreState] = useState(() => getHydrationSafeStore());
-  const [mounted, setMounted] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [, forceRender] = useState(0);
-
   // node refs keyed by member id (for SVG connectors)
-  const nodeRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
+  const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const selfRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function refresh() {
       setStoreState(getStore());
     }
-    refresh();
-    setMounted(true);
+    const frame = window.requestAnimationFrame(refresh);
     window.addEventListener("mv-store-update", refresh);
-    return () => window.removeEventListener("mv-store-update", refresh);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("mv-store-update", refresh);
+    };
   }, []);
 
   // Lock body scroll while the modal is open so the viewport doesn't jump.
@@ -333,12 +342,6 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Force a re-render after mount so connectors can measure DOM positions
-  useEffect(() => {
-    const timer = setTimeout(() => forceRender((n) => n + 1), 200);
-    return () => clearTimeout(timer);
-  }, []);
-
   const familyMembers = store.familyMembers ?? [];
   const familyLinks = store.familyLinks ?? [];
 
@@ -354,13 +357,6 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
     setActiveFamilyMember(id);
     onClose();
     window.location.href = "/dashboard";
-  }
-
-  // Ensure a ref exists for every member
-  for (const m of familyMembers) {
-    if (!nodeRefs.current[m.id]) {
-      nodeRefs.current[m.id] = { current: null } as React.RefObject<HTMLDivElement | null>;
-    }
   }
 
   // Bucket members into generations
@@ -395,7 +391,7 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
     }
   }
 
-  if (!mounted) return null;
+  if (typeof document === "undefined") return null;
 
   return createPortal(
     <div
@@ -447,7 +443,7 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
               {grandparents.length > 0 && (
                 <div className="flex flex-wrap justify-center gap-3">
                   {grandparents.map((m) => (
-                    <div key={m.id} ref={nodeRefs.current[m.id] as React.RefObject<HTMLDivElement>}>
+                    <div key={m.id} ref={(node) => { nodeRefs.current[m.id] = node; }}>
                       <NodeCard
                         member={m}
                         onEditSave={handleEditSave}
@@ -462,7 +458,7 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
               {parents.length > 0 && (
                 <div className="flex flex-wrap justify-center gap-3">
                   {parents.map((m) => (
-                    <div key={m.id} ref={nodeRefs.current[m.id] as React.RefObject<HTMLDivElement>}>
+                    <div key={m.id} ref={(node) => { nodeRefs.current[m.id] = node; }}>
                       <NodeCard
                         member={m}
                         onEditSave={handleEditSave}
@@ -479,7 +475,7 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
                 {selfRow
                   .filter((m) => m.relation === "brother" || m.relation === "sister")
                   .map((m) => (
-                    <div key={m.id} ref={nodeRefs.current[m.id] as React.RefObject<HTMLDivElement>}>
+                    <div key={m.id} ref={(node) => { nodeRefs.current[m.id] = node; }}>
                       <NodeCard
                         member={m}
                         onEditSave={handleEditSave}
@@ -511,7 +507,7 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
                       {i === 0 && (
                         <div className="w-6 h-px border-t-2 border-dashed border-[var(--accent)] opacity-40" />
                       )}
-                      <div ref={nodeRefs.current[m.id] as React.RefObject<HTMLDivElement>}>
+                      <div ref={(node) => { nodeRefs.current[m.id] = node; }}>
                         <NodeCard
                           member={m}
                           onEditSave={handleEditSave}
@@ -525,7 +521,7 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
                 {selfRow
                   .filter((m) => m.relation === "other")
                   .map((m) => (
-                    <div key={m.id} ref={nodeRefs.current[m.id] as React.RefObject<HTMLDivElement>}>
+                    <div key={m.id} ref={(node) => { nodeRefs.current[m.id] = node; }}>
                       <NodeCard
                         member={m}
                         onEditSave={handleEditSave}
@@ -539,7 +535,7 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
               {children.length > 0 && (
                 <div className="flex flex-wrap justify-center gap-3">
                   {children.map((m) => (
-                    <div key={m.id} ref={nodeRefs.current[m.id] as React.RefObject<HTMLDivElement>}>
+                    <div key={m.id} ref={(node) => { nodeRefs.current[m.id] = node; }}>
                       <NodeCard
                         member={m}
                         onEditSave={handleEditSave}
@@ -586,19 +582,16 @@ export function FamilyTreeView({ onClose }: { onClose: () => void }) {
               style={{ top: 0, left: 0 }}
               aria-hidden
             >
-              {connectors.map(({ from, to }) => {
-                const fromRef = from === "self" ? selfRef : nodeRefs.current[from];
-                const toRef = to === "self" ? selfRef : nodeRefs.current[to];
-                if (!fromRef || !toRef) return null;
-                return (
-                  <Connector
-                    key={`${from}-${to}`}
-                    fromRef={fromRef as React.RefObject<HTMLDivElement | null>}
-                    toRef={toRef as React.RefObject<HTMLDivElement | null>}
-                    containerRef={containerRef as React.RefObject<HTMLDivElement | null>}
-                  />
-                );
-              })}
+              {connectors.map(({ from, to }) => (
+                <Connector
+                  key={`${from}-${to}`}
+                  fromId={from}
+                  toId={to}
+                  nodeRefs={nodeRefs}
+                  selfRef={selfRef}
+                  containerRef={containerRef}
+                />
+              ))}
             </svg>
           )}
         </div>

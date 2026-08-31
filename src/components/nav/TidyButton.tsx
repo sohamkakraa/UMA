@@ -297,7 +297,7 @@ export function TidyButton() {
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
           <span className="hidden md:inline">Tidy</span>
-          <span className="hidden md:inline rounded-full border border-[var(--accent-2)]/30 bg-[var(--accent-2)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-2)]">
+          <span className="hidden rounded-full border border-[var(--accent-2)]/40 bg-[var(--accent-2)]/15 px-2 py-1 text-sm font-semibold text-[var(--fg)] md:inline">
             Beta
           </span>
         </Button>

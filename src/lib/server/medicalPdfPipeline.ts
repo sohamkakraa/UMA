@@ -70,7 +70,8 @@ function assistantTextContent(message: { content: Array<{ type: string; text?: s
 
 /**
  * Expected shape: opening ```uma-meta\n{...json}\n``` then the markdown body.
- * If the fence is missing, we treat the whole reply as markdown and use permissive defaults (charts/lab merge stay empty).
+ * Metadata is mandatory because it carries the medical-document decision and
+ * patient-name evidence; accepting an unstructured reply would fail open.
  */
 function parsePdfAgentResponse(raw: string): LlmExtract {
   const t = raw.trim();
@@ -93,19 +94,7 @@ function parsePdfAgentResponse(raw: string): LlmExtract {
     meta = zRes.data;
     markdownBody = t.slice(m[0].length).trim();
   } else {
-    const h1 = /^#\s+(.+)$/m.exec(t);
-    markdownBody = t;
-    meta = {
-      is_medical_document: true,
-      type: "Other",
-      patient_names_on_document: [],
-      ordering_physicians: [],
-      facility_name: null,
-      dateISO: null,
-      provider: null,
-      summary: "See the markdown below.",
-      title: h1 ? h1[1].trim() : "",
-    };
+    throw new Error("Model response is missing the required uma-meta block.");
   }
 
   if (!markdownBody || markdownBody.length < 24) {

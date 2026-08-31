@@ -3,18 +3,16 @@
 /**
  * AutoModeRunner — background effect that runs once per calendar day on app open.
  * Responsibilities:
- *  1. Call autoLogTodayDoses() — for medications in auto-tracking mode, inserts a
- *     "taken" health-log entry for today if one doesn't already exist. Silent — no
- *     notification is fired for routine auto-logging (would be noisy).
- *  2. Push an actionable `next_visit` notification if an appointment is within 3 days.
- *  3. Push cycle notifications (period soon / fertile window) for female users.
+ *  1. Push an actionable `next_visit` notification if an appointment is within 3 days.
+ *  2. Push cycle notifications (period soon / fertile window) for female users.
  *
- * All logic is client-side localStorage only. Not a medical device.
+ * Medication adherence is never inferred: only explicit user confirmations can
+ * create "taken" records. All logic is client-side. Not a medical device.
  */
 
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
-import { autoLogTodayDoses, getStore, pushNotification } from "@/lib/store";
+import { getStore, pushNotification } from "@/lib/store";
 
 const LAST_RUN_KEY = "mv_auto_mode_last_run_v1";
 
@@ -36,15 +34,7 @@ export function AutoModeRunner() {
 
     const store = getStore();
 
-    // 1. Auto-log today's doses for auto-mode meds (silent — no notification for routine auto-logging)
-    const autoMeds = (store.meds ?? []).filter((m) => m.trackingMode === "auto");
-    if (autoMeds.length > 0) {
-      autoLogTodayDoses();
-      // Intentionally no notification here: "X was auto-logged" is a noisy system event,
-      // not something the user needs to act on. Missed-dose alerts are handled separately.
-    }
-
-    // 2. Upcoming visit reminder (within 3 days)
+    // 1. Upcoming visit reminder (within 3 days)
     const nextVisit = store.profile?.nextVisitDate;
     if (nextVisit) {
       const daysUntil = Math.ceil(
@@ -61,7 +51,7 @@ export function AutoModeRunner() {
       }
     }
 
-    // 3. Cycle notifications (female users only)
+    // 2. Cycle notifications (female users only)
     if (store.profile?.sex === "Female") {
       const cycle = store.profile?.menstrualCycle;
       if (cycle?.lastPeriodStartISO && cycle?.typicalCycleLengthDays) {

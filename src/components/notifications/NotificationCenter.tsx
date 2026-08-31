@@ -107,7 +107,7 @@ export function NotificationCenter() {
         <button
           type="button"
           aria-label={`Notifications${unread > 0 ? ` — ${unread} unread` : ""}`}
-          className="relative h-8 w-8 rounded-xl flex items-center justify-center border border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/30 transition-colors"
+          className="relative flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)] transition-colors hover:text-[var(--fg)] hover:border-[var(--fg)]/30"
         >
           <Bell className="h-4 w-4" />
           {unread > 0 && (
@@ -134,7 +134,7 @@ export function NotificationCenter() {
                 type="button"
                 onClick={handleMarkAll}
                 title="Mark all as read"
-                className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--panel-2)] transition-colors"
+                className="flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--muted)] transition-colors hover:text-[var(--fg)] hover:bg-[var(--panel-2)]"
               >
                 <CheckCheck className="h-3.5 w-3.5" />
                 Mark all read
@@ -144,7 +144,7 @@ export function NotificationCenter() {
               type="button"
               onClick={() => setOpen(false)}
               aria-label="Close notifications"
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--panel-2)] transition-colors"
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:text-[var(--fg)] hover:bg-[var(--panel-2)]"
             >
               <X className="h-4 w-4" />
             </button>
@@ -157,7 +157,7 @@ export function NotificationCenter() {
             <div className="flex flex-col items-center justify-center gap-3 py-14 text-center px-6">
               <span className="text-4xl" aria-hidden>🔔</span>
               <p className="text-sm font-medium text-[var(--fg)]">You&apos;re all caught up</p>
-              <p className="text-xs text-[var(--muted)]">No new notifications right now.</p>
+              <p className="text-sm text-[var(--muted)]">No new notifications right now.</p>
             </div>
           ) : (
             <>
@@ -200,7 +200,7 @@ export function NotificationCenter() {
                     onClick={() => handleDismiss(n.id)}
                     aria-label={`Dismiss notification: ${n.title}`}
                     title="Dismiss"
-                    className="shrink-0 self-start mt-0.5 h-9 w-9 rounded-xl flex items-center justify-center text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--panel-2)] transition-colors"
+                    className="mt-0.5 flex h-11 w-11 shrink-0 self-start items-center justify-center rounded-xl text-[var(--muted)] transition-colors hover:text-[var(--fg)] hover:bg-[var(--panel-2)]"
                   >
                     <X className="h-4 w-4" />
                   </button>
